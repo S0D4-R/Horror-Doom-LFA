@@ -1,3 +1,4 @@
+class_name Mapa3D
 extends Node3D
 # Construye en 3D un mapa de muros y pasillos a partir de un .txt de unos y ceros.
 
@@ -5,6 +6,8 @@ extends Node3D
 @export var tam_celda: float = 2.0   # metros por celda
 @export var alto_muro: float = 3.0
 @export var camara_cenital: bool = false   # true = vista desde arriba; false = primera persona
+@export var solo_escenografia: bool = false   # true = solo muros y suelo (sin jugador, HUD ni perks): lo usa el menú 3D
+@export var con_techo: bool = true   # false = cielo abierto (cementerio, ciudad)
 @export var semilla: int = 0   # 0 = perks en posiciones distintas cada partida; otro número = siempre las mismas
 
 var matriz: Array = []
@@ -12,12 +15,17 @@ var jugador: Vector2i
 var salida: Vector2i
 var enemigo: Vector2i
 var jugador_nodo: Jugador
+var modo: int = Partida.Modo.ESCAPAR
 var enemigo_nodo: Node3D
 var hud: HUD
 var posiciones_perks: Dictionary = {}   # tipo -> celda, útil para el informe
 
 
 func _ready() -> void:
+	if Partida.activa and not solo_escenografia:   # llegamos desde el menú: usar el mapa y el modo elegidos
+		archivo_mapa = Partida.archivo_mapa()
+		modo = Partida.modo
+	print("Modo: %s | Mapa: %s" % [Partida.MODOS[modo]["nombre"], archivo_mapa])
 	var datos := Grafo.cargar(archivo_mapa)
 	matriz = datos["matriz"]
 	jugador = datos["jugador"]
@@ -27,7 +35,10 @@ func _ready() -> void:
 		return
 	_construir_muros()
 	_construir_suelo_y_techo()
-	_marcador(salida, Color(0.2, 0.4, 1.0))
+	if solo_escenografia:
+		return
+	if modo == Partida.Modo.ESCAPAR:   # en SUPERVIVENCIA no hay salida
+		_marcador(salida, Color(0.2, 0.4, 1.0))
 	enemigo_nodo = _marcador(enemigo, Color(1.0, 0.1, 0.1))
 	_colocar_perks()
 	if camara_cenital:
@@ -81,7 +92,7 @@ func _construir_suelo_y_techo() -> void:
 	var largo: float = matriz.size() * tam_celda
 	_crear_bloque(Vector3(ancho / 2.0, -0.1, largo / 2.0), Vector3(ancho, 0.2, largo),
 		_material(Color(0.12, 0.12, 0.14)), true)
-	if not camara_cenital:   # en vista cenital el techo taparía todo
+	if con_techo and not camara_cenital:   # en vista cenital el techo taparía todo
 		_crear_bloque(Vector3(ancho / 2.0, alto_muro + 0.1, largo / 2.0), Vector3(ancho, 0.2, largo),
 			_material(Color(0.08, 0.08, 0.09)), false)
 
@@ -218,3 +229,9 @@ func _buscar_celda(libres: Array[Vector2i], elegidas: Array[Vector2i]) -> Vector
 			if not cerca:
 				return c
 	return libres[0]
+
+
+# M = volver al menú principal.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_M:
+		get_tree().change_scene_to_file(Partida.ESCENA_MENU)

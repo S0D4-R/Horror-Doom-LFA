@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="HorrorDoom"
-run/main_scene="uid://d0hvgnwbjue8q"
+run/main_scene="uid://dfku556sep8l3"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 

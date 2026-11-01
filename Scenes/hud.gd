@@ -99,8 +99,8 @@ func _crear_barra() -> void:
 	fila.add_child(_lbl_arma)
 	for tipo in PERKS:
 		fila.add_child(_crear_slot(tipo))
-	var ayuda := _etiqueta("1 Linterna   2 Pistola\nR Radar   Clic: disparar", 13, Color(0.7, 0.7, 0.7))
-	ayuda.custom_minimum_size = Vector2(190, 0)
+	var ayuda := _etiqueta("1 Linterna · 2 Pistola · R Radar\nClic: disparar · M: menú", 12, Color(0.7, 0.7, 0.7))
+	ayuda.custom_minimum_size = Vector2(250, 0)
 	fila.add_child(ayuda)
 
 
