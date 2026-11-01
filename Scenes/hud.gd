@@ -29,8 +29,8 @@ var _mensaje_t: float = 0.0
 
 
 func _ready() -> void:
-	_tex_linterna = load("res://Assets/mano_linterna.png")
-	_tex_pistola = load("res://Assets/mano_pistola.png")
+	_tex_linterna = load("res://Assets/Chars/hand.png")
+	_tex_pistola = load("res://Assets/Chars/pistol.png")
 	_raiz = Control.new()
 	_raiz.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_raiz)
