@@ -1,48 +1,46 @@
 class_name EnemigoPerseguidor
-extends Node2D
+extends CharacterBody3D # O Node3D / Area3D según cómo lo tengas estructurado
 
-# Estados del autómata
+# Definición de estados del autómata
 enum Estado { IDLE, ESPERANDO, PERSIGUIENDO }
 var estado_actual: Estado = Estado.IDLE
 
-@export var distancia_activacion: float = 150.0  # El espacio mínimo para empezar a rastrear
-var contador_movimientos_jugador: int = 0
-var posicion_en_grilla: Vector2i = Vector2i.ZERO # O Vector2 según cómo manejes tu mapa
-
-# Referencia al jugador (se puede asignar al iniciar)
-var jugador: Node2D = null
+@export var distancia_activacion: float = 10.0  # El "cierto espacio" mínimo para que despierte
+var contador_pasos_jugador: int = 0
+var jugador: Node3D = null
 
 func _ready() -> void:
-	# Buscamos al jugador en la escena (ajusta la ruta según tu estructura)
-	jugador = get_node_or_null("../Jugador") 
+	# Busca al jugador en la escena principal
+	jugador = get_node_or_null("../Jugador")
 
-# Esta función debe llamarse cada vez que EL JUGADOR se mueva con éxito
-To do: registrar_movimiento_jugador() -> void:
+# Esta función es llamada desde el script del Jugador cada vez que da un paso (cambia de celda)
+func registrar_movimiento_jugador() -> void:
 	if not jugador:
 		return
 
-	# 1. Medir el espacio (distancia) actual con el jugador
+	# 1. Medir la distancia ("cierto espacio") con el jugador
 	var distancia = global_position.distance_to(jugador.global_position)
 
-	# Si está dentro del rango de espacio permitido, el autómata se activa
+	# Si el jugador está dentro del radio de detección
 	if distancia <= distancia_activacion:
-		contador_movimientos_jugador += 1
+		contador_pasos_jugador += 1
 		
-		# Se mueve cada 2 movimientos del jugador
-		if contador_movimientos_jugador >= 2:
+		# 2. Condición del autómata: Se mueve cada 2 movimientos del jugador
+		if contador_pasos_jugador >= 2:
 			estado_actual = Estado.PERSIGUIENDO
-			ejecutar_paso_persecucion()
-			contador_movimientos_jugador = 0 # Reiniciamos el contador
+			ejecutar_persecucion()
+			contador_pasos_jugador = 0 # Reiniciamos el contador para los siguientes 2 pasos
 		else:
 			estado_actual = Estado.ESPERANDO
+			print("El monstruo te mira y espera... (Movimiento del jugador: ", contador_pasos_jugador, ")")
 	else:
 		estado_actual = Estado.IDLE
-		contador_movimientos_jugador = 0
+		contador_pasos_jugador = 0
 
-func ejecutar_paso_persecucion() -> void:
-	# Lógica para acercarse una casilla / un paso hacia el jugador
-	# Si usas posiciones en pixeles directos:
+func ejecutar_persecucion() -> void:
+	# Lógica para que el monstruo avance un paso hacia la posición del jugador
 	var direccion = (jugador.global_position - global_position).normalized()
-	global_position += direccion * 32.0 # Asumiendo un tamaño de celda de 32px, ajústalo a tu juego
 	
-	print("¡El monstruo se ha movido persiguiéndote tras 2 de tus movimientos!")
+	# Si te acercas por casillas exactas, puedes sumarle la medida de tu celda (ej: 2.0 unidades)
+	global_position += direccion * 2.0 
+	print("¡El monstruo se ha movido hacia ti!")
