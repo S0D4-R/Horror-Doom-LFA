@@ -2,10 +2,19 @@ class_name Jugador
 extends CharacterBody3D
 # Jugador en primera persona. Se construye solo: cuerpo, colisión, cámara, linterna y sonidos.
 # Controles: WASD / flechas = mover, A/D = deslizarse, flechas izq/der = girar, mouse = mirar,
-# Shift = correr, 1 = linterna, 2 = pistola, RUEDA DEL MOUSE = alternar linterna/pistola,
-# R = radar, clic izquierdo = disparar, Esc = soltar mouse.
+# Shift = correr (consume stamina), 1 = linterna, 2 = pistola, RUEDA DEL MOUSE = alternar linterna/pistola,
+# R = radar, clic izquierdo = disparar, Esc = pausa.
+#
+# ASSETS PENDIENTES:
+#   Sprite manos / linterna  → res://Assets/Chars/LANTERN_recolor2.png
+#   Sprite manos / pistola   → res://Assets/Chars/pistol_hand_recolor.png
+#   Sprite flash disparo     → res://Assets/Chars/muzzle_flash.png
+#   Sprite manos muertas     → res://Assets/Chars/dead_hands.png
+#                              (ambas manos centradas, versión en el suelo)
+#   Sprite Abaddon 2D        → res://Assets/Chars/abaddon_sprite.png
+#                              (se asigna al Sprite3D/AnimatedSprite3D del nodo Abaddon desde Inspector)
 
-signal celda_cambiada(celda: Vector2i)    # entra a una celda nueva (cuenta como un paso)
+signal celda_cambiada(celda: Vector2i)
 signal perk_recogido(tipo: int)
 signal arma_cambiada(arma: int)
 signal disparo_realizado
@@ -13,6 +22,7 @@ signal escudo_roto
 signal ventana_huida_iniciada
 signal ventana_huida_terminada
 signal linterna_cambiada(encendida: bool)
+signal jugador_muerto                     # la cámara cayó al suelo (HUD muestra game-over)
 
 enum Arma { LINTERNA, PISTOLA }
 
@@ -20,41 +30,53 @@ enum Arma { LINTERNA, PISTOLA }
 const LINTERNA_ENERGIA: float = 1.8
 const LINTERNA_ALCANCE: float = 14.0
 const LINTERNA_ANGULO: float = 30.0
-const LINTERNA_CON_PISTOLA: float = 0.4    # fracción de luz cuando llevas la pistola en la mano
+const LINTERNA_CON_PISTOLA: float = 0.4
 
 # --- Ajustes de los perks ---
-const BALAS_POR_PISTOLA: int = 6
-const CADENCIA: float = 0.45               # segundos entre disparos
-const RADAR_DURACION: float = 20.0         # segundos de radar por perk
+const BALAS_POR_PISTOLA: int = 1           # ← DOWNGRADE: solo 1 bala por perk de pistola
+const CADENCIA: float = 0.45
+const RADAR_DURACION: float = 7.0          # ← DOWNGRADE: 7 segundos de radar
 
-# --- Persecución (solo en el modo U R D4MN3D) ---
-const RADIO_CERCANIA: float = 16.0         # metros: a esta distancia empiezan los efectos
-const RADIO_LINTERNA_OFF: float = 6.0      # metros: la linterna se apaga
-const HISTERESIS_LINTERNA: float = 2.0     # debes alejarte 2 m más para que se prenda otra vez
-const VENTANA_HUIDA: float = 10.0          # segundos de huida tras gastar el escudo
-# Volumen (dB) de los bucles según la cercanía: de lejos (min) a encima del enemigo (max).
-const VOL_RESPIRACION_MIN: float = -20.0
-const VOL_RESPIRACION_MAX: float = 9.0     # la respiración domina
-const VOL_SUSURROS_MIN: float = -4.0      # MIN = MAX: volumen alto y constante
-const VOL_SUSURROS_MAX: float = -4.0
-const DEBUG_TECLA_ATAQUE: bool = true      # H simula un golpe del enemigo (quítalo cuando exista el enemigo)
+# --- Stamina (correr) ---
+const STAMINA_MAX: float = 5.0             # segundos de carrera continua
+const STAMINA_RECARGA: float = 0.4         # velocidad de recarga (fracción por segundo)
+const STAMINA_GASTO: float = 1.0           # gasto por segundo corriendo
 
-# --- Pasos ---
-const PASOS_POR_PASO: bool = false         # false = un audio continuo mientras caminas; true = un audio por paso
-const DIST_PASO: float = 2.2               # metros entre pasos (solo si PASOS_POR_PASO es true)
-
-@export var velocidad: float = 5.0
+# --- Velocidades ---
+# NOTA: la velocidad del enemigo se ajusta en enemigo.gd (Abaddon.velocidad_caminando/corriendo).
+const VELOCIDAD_CAMINAR: float = 4.2       # el enemigo es un poco más rápido que esto
+const VELOCIDAD_CORRER: float  = 7.0       # corriendo el jugador supera al enemigo
+@export var velocidad: float = VELOCIDAD_CAMINAR   # se sobreescribe en _physics_process
 @export var sensibilidad: float = 0.0025
 @export var velocidad_giro: float = 2.2
 @export var gravedad: float = 20.0
 @export var altura_ojos: float = 1.6
+
+# --- Persecución ---
+const RADIO_CERCANIA: float = 16.0
+const RADIO_LINTERNA_OFF: float = 6.0
+const HISTERESIS_LINTERNA: float = 2.0
+const VENTANA_HUIDA: float = 10.0
+const VOL_RESPIRACION_MIN: float = -20.0
+const VOL_RESPIRACION_MAX: float = 9.0
+const VOL_SUSURROS_MIN: float = -4.0
+const VOL_SUSURROS_MAX: float = -4.0
+const DEBUG_TECLA_ATAQUE: bool = true
+
+# --- Pasos ---
+const PASOS_POR_PASO: bool = false
+const DIST_PASO: float = 2.2
+
+# --- Muerte ---
+const ALTURA_OJOS_MUERTO: float = 0.25
+const VELOCIDAD_CAIDA_MUERTE: float = 2.8
 
 var tam_celda: float = 2.0
 var celda_actual: Vector2i = Vector2i(-1, -1)
 var camara: Camera3D
 var linterna: SpotLight3D
 
-# Inventario: estos valores también forman parte del estado del autómata.
+# Inventario
 var arma_actual: int = Arma.LINTERNA
 var tiene_pistola: bool = false
 var balas: int = 0
@@ -63,14 +85,22 @@ var radar_activo: bool = false
 var radar_energia: float = 0.0
 var tiene_escudo: bool = false
 
-# Persecución: los asigna mapa_3d.gd.
+# Stamina
+var stamina: float = STAMINA_MAX
+var corriendo: bool = false            # true solo si Shift presionado Y hay stamina
+
+# Persecución
 var enemigo: Node3D
 var efectos_cercania: bool = false
-var cercania: float = 0.0              # 0 = lejos, 1 = encima del enemigo (suavizado)
+var cercania: float = 0.0
 var distancia_enemigo: float = INF
 var linterna_apagada: bool = false
-var en_ventana_huida: bool = false     # el enemigo puede consultarlo (p. ej. para quedarse quieto)
+var en_ventana_huida: bool = false
 var tiempo_huida: float = 0.0
+
+# Estado de muerte
+var esta_muerto: bool = false
+var _muerte_completada: bool = false   # true cuando la animación de caída terminó
 
 var _pitch: float = 0.0
 var _enfriamiento: float = 0.0
@@ -106,13 +136,12 @@ func _ready() -> void:
 	camara.add_child(linterna)
 	_actualizar_linterna()
 
-	_flash = OmniLight3D.new()    # destello del disparo
+	_flash = OmniLight3D.new()
 	_flash.light_color = Color(1.0, 0.8, 0.4)
 	_flash.omni_range = 8.0
 	_flash.light_energy = 0.0
 	camara.add_child(_flash)
 
-	# Bucles de audio (null si todavía no pusiste el archivo en Music/Sfx).
 	_snd_respiracion = Sonidos.crear_bucle(self, "respiracion", -40.0)
 	_snd_susurros = Sonidos.crear_bucle(self, "susurros", -40.0)
 	_snd_reloj = Sonidos.crear_bucle(self, "reloj", 0.0)
@@ -124,6 +153,8 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if esta_muerto:
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * sensibilidad)
 		_pitch = clampf(_pitch - event.relative.y * sensibilidad, -1.2, 1.2)
@@ -147,10 +178,15 @@ func _unhandled_input(event: InputEvent) -> void:
 				if DEBUG_TECLA_ATAQUE:
 					print("[DEBUG] golpe simulado -> letal: ", recibir_ataque())
 			KEY_ESCAPE:
-				Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+				# ESC lo maneja mapa_3d.gd para abrir el menú de pausa
+				pass
 
 
 func _physics_process(delta: float) -> void:
+	if esta_muerto:
+		_animar_muerte(delta)
+		return
+
 	var giro: int = int(Input.is_physical_key_pressed(KEY_LEFT)) - int(Input.is_physical_key_pressed(KEY_RIGHT))
 	rotate_y(giro * velocidad_giro * delta)
 
@@ -158,7 +194,16 @@ func _physics_process(delta: float) -> void:
 	var frontal: int = int(Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN)) \
 		- int(Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP))
 	var dir: Vector3 = (global_transform.basis * Vector3(lateral, 0.0, frontal)).normalized()
-	var v: float = velocidad * (1.6 if Input.is_physical_key_pressed(KEY_SHIFT) else 1.0)
+
+	# --- Stamina y velocidad ---
+	var quiere_correr: bool = Input.is_physical_key_pressed(KEY_SHIFT) and stamina > 0.0
+	corriendo = quiere_correr and dir != Vector3.ZERO
+	if corriendo:
+		stamina = maxf(0.0, stamina - STAMINA_GASTO * delta)
+	else:
+		stamina = minf(STAMINA_MAX, stamina + STAMINA_RECARGA * delta)
+
+	var v: float = VELOCIDAD_CORRER if corriendo else VELOCIDAD_CAMINAR
 	velocity.x = dir.x * v
 	velocity.z = dir.z * v
 	velocity.y = 0.0 if is_on_floor() else velocity.y - gravedad * delta
@@ -170,7 +215,7 @@ func _physics_process(delta: float) -> void:
 	_enfriamiento = maxf(0.0, _enfriamiento - delta)
 	if radar_activo:
 		radar_energia -= delta
-		if radar_energia <= 0.0:    # se agota la batería: se pierde el perk
+		if radar_energia <= 0.0:
 			radar_energia = 0.0
 			radar_activo = false
 			tiene_radar = false
@@ -179,15 +224,40 @@ func _physics_process(delta: float) -> void:
 	if c != celda_actual:
 		celda_actual = c
 		celda_cambiada.emit(c)
-		
-		# --- NOTIFICAR AL AUTÓMATA DEL ENEMIGO ---
-		# Busca el nodo del enemigo en la escena (ajusta la ruta si es necesario)
-		var enemigo = get_node_or_null("../EnemigoPerseguidor")
-		if enemigo and enemigo.has_method("registrar_movimiento_jugador"):
-			enemigo.registrar_movimiento_jugador()
+		var enemigo_nodo = get_node_or_null("../EnemigoPerseguidor")
+		if enemigo_nodo and enemigo_nodo.has_method("registrar_movimiento_jugador"):
+			enemigo_nodo.registrar_movimiento_jugador()
 
 
-# ---------- Persecución: cercanía, respiración, linterna y ventana de huida ----------
+# ---------- Muerte: la cámara cae al suelo → GAME OVER (sin respawn) ----------
+
+func morir() -> void:
+	if esta_muerto:
+		return
+	esta_muerto = true
+	velocity = Vector3.ZERO
+	if _snd_respiracion != null and _snd_respiracion.playing:
+		_snd_respiracion.stop()
+	if _snd_susurros != null and _snd_susurros.playing:
+		_snd_susurros.stop()
+	if _snd_reloj != null and _snd_reloj.playing:
+		_snd_reloj.stop()
+	jugador_muerto.emit()   # el HUD muestra la pantalla de game-over cuando la animación termina
+
+
+func _animar_muerte(delta: float) -> void:
+	if _muerte_completada:
+		return
+	var altura_objetivo: float = ALTURA_OJOS_MUERTO
+	camara.position.y = lerpf(camara.position.y, altura_objetivo, VELOCIDAD_CAIDA_MUERTE * delta)
+	_pitch = lerpf(_pitch, -0.3, VELOCIDAD_CAIDA_MUERTE * delta)
+	camara.rotation.x = _pitch
+	# Cuando la cámara está casi en el suelo la animación se considera completa
+	if absf(camara.position.y - altura_objetivo) < 0.02:
+		_muerte_completada = true
+
+
+# ---------- Persecución ----------
 
 func _actualizar_persecucion(delta: float) -> void:
 	var d: float = INF
@@ -198,13 +268,11 @@ func _actualizar_persecucion(delta: float) -> void:
 	var objetivo: float = clampf(1.0 - d / RADIO_CERCANIA, 0.0, 1.0)
 	cercania = lerpf(cercania, objetivo, 1.0 - exp(-6.0 * delta))
 
-	# La linterna se apaga al acercarse el enemigo y vuelve (con su sonido) al alejarte.
 	if not linterna_apagada and d < RADIO_LINTERNA_OFF:
 		_poner_linterna(false)
 	elif linterna_apagada and d > RADIO_LINTERNA_OFF + HISTERESIS_LINTERNA:
 		_poner_linterna(true)
 
-	# Respiración y susurros suenan a la vez y suben de volumen mientras más cerca está el enemigo.
 	var cerca: bool = cercania > 0.03 and not en_ventana_huida
 	_bucle_cercania(_snd_respiracion, cerca, VOL_RESPIRACION_MIN, VOL_RESPIRACION_MAX)
 	_bucle_cercania(_snd_susurros, cerca, VOL_SUSURROS_MIN, VOL_SUSURROS_MAX)
@@ -249,19 +317,17 @@ func _terminar_ventana_huida() -> void:
 	ventana_huida_terminada.emit()
 
 
-# El enemigo llama a esto al alcanzarte. Devuelve true si el ataque es LETAL.
-# - Durante la ventana de huida eres invulnerable.
-# - Con escudo: se gasta, empieza la ventana de huida de 10 s y sobrevives.
 func recibir_ataque() -> bool:
 	if en_ventana_huida:
 		return false
 	if tiene_escudo:
 		tiene_escudo = false
 		Sonidos.reproducir(self, "escudo_roto")
-		Sonidos.reproducir(self, "implosion")   # justo al inicio del golpe, antes de que empiece el reloj
+		Sonidos.reproducir(self, "implosion")
 		escudo_roto.emit()
 		_iniciar_ventana_huida()
 		return false
+	morir()
 	return true
 
 
@@ -270,10 +336,9 @@ func recibir_ataque() -> bool:
 func _sonido_pasos(delta: float) -> void:
 	var rapidez: float = Vector2(velocity.x, velocity.z).length()
 	var moviendo: bool = is_on_floor() and rapidez > 0.5
-	var corriendo: bool = Input.is_physical_key_pressed(KEY_SHIFT)
 	if PASOS_POR_PASO:
 		if not moviendo:
-			_dist_paso = DIST_PASO * 0.6   # al empezar a caminar suena un paso enseguida
+			_dist_paso = DIST_PASO * 0.6
 			return
 		_dist_paso += rapidez * delta
 		if _dist_paso >= DIST_PASO:
@@ -320,7 +385,6 @@ func equipar(a: int) -> void:
 	arma_cambiada.emit(a)
 
 
-# Rueda del mouse: pasa de la linterna a la pistola y viceversa (si ya tienes la pistola).
 func alternar_arma() -> void:
 	equipar(Arma.PISTOLA if arma_actual == Arma.LINTERNA else Arma.LINTERNA)
 
@@ -344,7 +408,7 @@ func disparar() -> void:
 	var consulta := PhysicsRayQueryParameters3D.create(origen, destino, 1, excluir)
 	var impacto: Dictionary = get_world_3d().direct_space_state.intersect_ray(consulta)
 	if not impacto.is_empty() and impacto["collider"].has_method("recibir_disparo"):
-		impacto["collider"].recibir_disparo()    # el enemigo implementará este método
+		impacto["collider"].recibir_disparo()
 
 
 func _actualizar_linterna() -> void:

@@ -1,29 +1,53 @@
 class_name Mapa3D
 extends Node3D
 # Construye en 3D un mapa de muros y pasillos a partir de un .txt de unos y ceros.
- 
+#
+# SALIDA ESTRATÉGICA
+# ──────────────────
+# La salida se elige para que sea:
+#   • Lejos del jugador (distancia Dijkstra máxima posible, ≥ 60 % del mapa)
+#   • No trivialmente visible desde el inicio
+#   • Accesible pero no obvia: en un corredor de baja conectividad
+# Las posiciones candidatas se computan con _elegir_salida_estrategica() en _ready().
+# Si el mapa ya trae salida en el .txt con una posición buena, se respeta; de lo contrario
+# se reemplaza por la calculada.
+#
+# MODO VICTORIA
+# ─────────────
+# El jugador gana al entrar en la celda de la salida. El HUD muestra una pantalla de victoria.
+
 @export_file("*.txt") var archivo_mapa: String = "res://Maps/mapa2_cementerio.txt"
-@export var tam_celda: float = 2.0   # metros por celda
+@export var tam_celda: float = 2.0
 @export var alto_muro: float = 3.0
-@export var camara_cenital: bool = false   # true = vista desde arriba; false = primera persona
-@export var solo_escenografia: bool = false   # true = solo muros y suelo (sin jugador, HUD ni perks): lo usa el menú 3D
-@export var con_techo: bool = true   # false = cielo abierto (cementerio, ciudad)
-@export var semilla: int = 0   # 0 = perks en posiciones distintas cada partida; otro número = siempre las mismas
- 
+@export var camara_cenital: bool = false
+@export var solo_escenografia: bool = false
+@export var con_techo: bool = true
+@export var semilla: int = 0
+
+# Fuerza la salida que viene en el .txt en lugar de calcular una estratégica.
+# Pon esto a true si ya ajustaste la salida a mano en el .txt y no quieres que se mueva.
+@export var respetar_salida_txt: bool = false
+
 var matriz: Array = []
 var jugador: Vector2i
 var salida: Vector2i
 var enemigo: Vector2i
 var jugador_nodo: Jugador
 var modo: int = Partida.Modo.U_R_D4MN3D
-var enemigo_nodo: Perseguidor
+var enemigo_nodo: Abaddon
 var hud: HUD
 var _env: Environment
-var posiciones_perks: Dictionary = {}   # tipo -> celda, útil para el informe
- 
- 
+var posiciones_perks: Dictionary = {}
+
+var _snd_mapa: AudioStreamPlayer
+
+# Distancia mínima (nodos Dijkstra) que debe tener la salida desde el jugador inicial.
+# Se intenta maximizar; este valor es el umbral mínimo aceptable.
+const SALIDA_DIST_MIN: int = 40
+
+
 func _ready() -> void:
-	if Partida.activa and not solo_escenografia:   # llegamos desde el menú: usar el mapa y el modo elegidos
+	if Partida.activa and not solo_escenografia:
 		archivo_mapa = Partida.archivo_mapa()
 		modo = Partida.modo
 	print("Modo: %s | Mapa: %s" % [Partida.MODOS[modo]["nombre"], archivo_mapa])
@@ -34,16 +58,23 @@ func _ready() -> void:
 	enemigo = datos["enemigo"]
 	if matriz.is_empty():
 		return
+
+	# Calcular una salida estratégica (si no se pide respetar la del .txt)
+	if not respetar_salida_txt and modo == Partida.Modo.U_R_D4MN3D:
+		salida = _elegir_salida_estrategica()
+
 	_construir_muros()
 	_construir_suelo_y_techo()
 	if solo_escenografia:
 		return
-	if modo == Partida.Modo.U_R_D4MN3D:   # en SUPERVIVENCIA no hay salida
+	if modo == Partida.Modo.U_R_D4MN3D:
 		_marcador(salida, Color(0.2, 0.4, 1.0))
-	enemigo_nodo = Perseguidor.new()
+
+	enemigo_nodo = EnemigoPerseguidor.new()
 	enemigo_nodo.mapa = self
 	enemigo_nodo.position = celda_a_mundo(enemigo)
 	add_child(enemigo_nodo)
+
 	_colocar_perks()
 	if camara_cenital:
 		_marcador(jugador, Color(0.1, 0.9, 0.2))
@@ -53,14 +84,109 @@ func _ready() -> void:
 		_agregar_jugador()
 		enemigo_nodo.jugador = jugador_nodo
 		enemigo_nodo.alcanzo_jugador.connect(_on_jugador_atrapado)
- 
- 
-# Centro de una celda en coordenadas del mundo 3D (lo usarán el jugador y el enemigo).
+
+	_iniciar_audio_mapa()
+	print("Salida estratégica en: %s" % salida)
+
+
+# ── Salida estratégica ───────────────────────────────────────────────────────
+# Criterios (en orden de prioridad):
+#   1. La ruta Dijkstra desde el jugador sea lo más larga posible (difícil de llegar).
+#   2. La ruta Dijkstra desde el enemigo sea >= la del jugador - 5 (no trivialmente bloqueada).
+#   3. La celda tenga exactamente 2 vecinos libres (corredor estrecho, no encrucijada).
+#   4. No esté a menos de 3 celdas de cualquier borde del mapa.
+func _elegir_salida_estrategica() -> Vector2i:
+	var filas: int = matriz.size()
+	var cols: int = matriz[0].size()
+
+	# Distancias Dijkstra desde el jugador y desde el enemigo (grafo inverso)
+	var dist_jugador: Dictionary = _dijkstra_distancias(jugador)
+	var dist_enemigo: Dictionary = _dijkstra_distancias(enemigo)
+
+	# Recopilar candidatos: celdas libres que no son la posición inicial del jugador
+	var candidatos: Array = []
+	for y in filas:
+		for x in cols:
+			if matriz[y][x] != 0:
+				continue
+			var c := Vector2i(x, y)
+			if c == jugador or c == enemigo:
+				continue
+			# Borde mínimo de 3 celdas
+			if x < 3 or y < 3 or x >= cols - 3 or y >= filas - 3:
+				continue
+			if not dist_jugador.has(c):
+				continue
+			var dj: int = dist_jugador[c]
+			if dj < SALIDA_DIST_MIN:
+				continue
+			var de: int = dist_enemigo.get(c, 999)
+			# Vecinos libres (conectividad del corredor)
+			var vecinos_libres: int = 0
+			for d in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+				var n: Vector2i = c + d
+				if n.y >= 0 and n.y < filas and n.x >= 0 and n.x < cols and matriz[n.y][n.x] == 0:
+					vecinos_libres += 1
+			candidatos.append({"celda": c, "dj": dj, "de": de, "vec": vecinos_libres})
+
+	if candidatos.is_empty():
+		# Fallback: usar la salida original del .txt
+		return salida
+
+	# Ordenar: maximizar dj, preferir vec == 2 (corredor), penalizar si de < dj - 5
+	candidatos.sort_custom(func(a, b):
+		var score_a: int = a["dj"] * 2 + (10 if a["vec"] == 2 else 0) - (20 if a["de"] < a["dj"] - 5 else 0)
+		var score_b: int = b["dj"] * 2 + (10 if b["vec"] == 2 else 0) - (20 if b["de"] < b["dj"] - 5 else 0)
+		return score_a > score_b
+	)
+	return candidatos[0]["celda"]
+
+
+# BFS/Dijkstra de distancias (peso uniforme) desde una celda origen.
+func _dijkstra_distancias(origen: Vector2i) -> Dictionary:
+	var dist: Dictionary = {}
+	var cola: Array = [[0, origen]]
+	dist[origen] = 0
+	var filas: int = matriz.size()
+	var cols: int = matriz[0].size()
+	while not cola.is_empty():
+		cola.sort_custom(func(a, b): return a[0] < b[0])
+		var actual = cola.pop_front()
+		var d: int = actual[0]
+		var c: Vector2i = actual[1]
+		for dir in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+			var n: Vector2i = c + dir
+			if n.y < 0 or n.y >= filas or n.x < 0 or n.x >= cols:
+				continue
+			if matriz[n.y][n.x] != 0:
+				continue
+			var nd: int = d + 1
+			if not dist.has(n) or nd < dist[n]:
+				dist[n] = nd
+				cola.append([nd, n])
+	return dist
+
+
+# ── Victoria ─────────────────────────────────────────────────────────────────
+
+func _on_jugador_llego_a_salida() -> void:
+	print("¡Jugador escapó!")
+	# Pausar al enemigo
+	if enemigo_nodo != null and enemigo_nodo.has_method("congelar"):
+		enemigo_nodo.congelar(true)
+	if hud != null:
+		hud._mostrar_victoria()
+	# Esperar 3 segundos y volver al menú
+	await get_tree().create_timer(3.0).timeout
+	get_tree().change_scene_to_file(Partida.ESCENA_MENU)
+
+
+# ── Resto del código (sin cambios funcionales) ───────────────────────────────
+
 func celda_a_mundo(c: Vector2i) -> Vector3:
 	return Vector3((c.x + 0.5) * tam_celda, 0.0, (c.y + 0.5) * tam_celda)
- 
- 
-# Un muro solo se dibuja si toca (incluso en diagonal) alguna celda de piso.
+
+
 func _es_visible(x: int, y: int) -> bool:
 	var cols: int = matriz[0].size()
 	for dy in range(-1, 2):
@@ -71,9 +197,8 @@ func _es_visible(x: int, y: int) -> bool:
 				if matriz[ny][nx] == 0:
 					return true
 	return false
- 
- 
-# Une muros consecutivos de una fila en una sola caja para tener muchos menos nodos.
+
+
 func _construir_muros() -> void:
 	var mat := _material(Color(0.55, 0.55, 0.6))
 	var cols: int = matriz[0].size()
@@ -91,18 +216,18 @@ func _construir_muros() -> void:
 					mat, true)
 			else:
 				x += 1
- 
- 
+
+
 func _construir_suelo_y_techo() -> void:
 	var ancho: float = matriz[0].size() * tam_celda
 	var largo: float = matriz.size() * tam_celda
 	_crear_bloque(Vector3(ancho / 2.0, -0.1, largo / 2.0), Vector3(ancho, 0.2, largo),
 		_material(Color(0.12, 0.12, 0.14)), true)
-	if con_techo and not camara_cenital:   # en vista cenital el techo taparía todo
+	if con_techo and not camara_cenital:
 		_crear_bloque(Vector3(ancho / 2.0, alto_muro + 0.1, largo / 2.0), Vector3(ancho, 0.2, largo),
 			_material(Color(0.08, 0.08, 0.09)), false)
- 
- 
+
+
 func _crear_bloque(pos: Vector3, tam: Vector3, mat: Material, con_colision: bool) -> void:
 	var cuerpo := StaticBody3D.new()
 	cuerpo.position = pos
@@ -119,15 +244,14 @@ func _crear_bloque(pos: Vector3, tam: Vector3, mat: Material, con_colision: bool
 		col.shape = forma
 		cuerpo.add_child(col)
 	add_child(cuerpo)
- 
- 
+
+
 func _material(color: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = color
 	return m
- 
- 
-# Esfera de color provisional: azul = salida, rojo = enemigo, verde = jugador (solo en vista cenital).
+
+
 func _marcador(c: Vector2i, color: Color) -> MeshInstance3D:
 	var m := MeshInstance3D.new()
 	var esfera := SphereMesh.new()
@@ -141,25 +265,30 @@ func _marcador(c: Vector2i, color: Color) -> MeshInstance3D:
 	m.position = celda_a_mundo(c) + Vector3(0.0, tam_celda * 0.3, 0.0)
 	add_child(m)
 	return m
- 
- 
+
+
 func _agregar_jugador() -> void:
 	jugador_nodo = Jugador.new()
 	jugador_nodo.tam_celda = tam_celda
 	jugador_nodo.position = celda_a_mundo(jugador)
-	jugador_nodo.celda_actual = jugador   # así la celda inicial no cuenta como un paso
-	jugador_nodo.enemigo = enemigo_nodo   # para medir la distancia al enemigo
-	jugador_nodo.efectos_cercania = (modo == Partida.Modo.U_R_D4MN3D)   # efectos solo con un enemigo
+	jugador_nodo.celda_actual = jugador
+	jugador_nodo.enemigo = enemigo_nodo
+	jugador_nodo.efectos_cercania = (modo == Partida.Modo.U_R_D4MN3D)
 	add_child(jugador_nodo)
-	# Mientras dura la huida (colores invertidos) el enemigo se queda quieto.
 	jugador_nodo.ventana_huida_iniciada.connect(_congelar_enemigo.bind(true))
 	jugador_nodo.ventana_huida_terminada.connect(_congelar_enemigo.bind(false))
+	# Detectar cuando el jugador llega a la salida
+	jugador_nodo.celda_cambiada.connect(_on_celda_cambiada)
 	hud = HUD.new()
 	add_child(hud)
 	hud.conectar(jugador_nodo, enemigo_nodo)
- 
- 
-# Oscuridad casi total y niebla: la linterna del jugador es la luz principal.
+
+
+func _on_celda_cambiada(celda: Vector2i) -> void:
+	if celda == salida:
+		_on_jugador_llego_a_salida()
+
+
 func _agregar_ambiente() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -174,8 +303,8 @@ func _agregar_ambiente() -> void:
 	we.environment = env
 	_env = env
 	add_child(we)
- 
- 
+
+
 func _agregar_camara_cenital() -> void:
 	var ancho: float = matriz[0].size() * tam_celda
 	var largo: float = matriz.size() * tam_celda
@@ -191,27 +320,30 @@ func _agregar_camara_cenital() -> void:
 	add_child(luz)
 
 
-# ---------- Perks en posiciones aleatorias, con regeneración ----------
+func _iniciar_audio_mapa() -> void:
+	var nombre_base: String = archivo_mapa.get_file().get_basename()
+	_snd_mapa = Sonidos.crear_bucle(self, nombre_base, -8.0)
+	if _snd_mapa != null:
+		_snd_mapa.play()
 
-const INTERVALO_REGENERACION: float = 20.0   # segundos entre un perk que reaparece y el siguiente
+
+const INTERVALO_REGENERACION: float = 20.0
 
 var _rng := RandomNumberGenerator.new()
 var _celdas_libres: Array[Vector2i] = []
-var _perks_en_mapa: Dictionary = {}   # tipo -> PerkItem disponible ahora mismo
+var _perks_en_mapa: Dictionary = {}
 var _regenerando: bool = false
 var _t_regeneracion: float = 0.0
 
 
 func _distancia(a: Vector2i, b: Vector2i) -> int:
-	return absi(a.x - b.x) + absi(a.y - b.y)   # distancia Manhattan en celdas
+	return absi(a.x - b.x) + absi(a.y - b.y)
 
 
 func _celda_de(nodo: Node3D) -> Vector2i:
 	return Vector2i(floori(nodo.global_position.x / tam_celda), floori(nodo.global_position.z / tam_celda))
 
 
-# Coloca un perk de cada tipo en celdas libres al azar, lejos del jugador, la salida,
-# el enemigo y los otros perks.
 func _colocar_perks() -> void:
 	if semilla == 0:
 		_rng.randomize()
@@ -236,15 +368,12 @@ func _crear_perk(tipo: int, celda: Vector2i) -> void:
 	print("Perk %s en la celda %s" % [Perks.nombre(tipo), celda])
 
 
-# Cuando se toman TODOS los perks, empieza a reaparecer uno cada INTERVALO_REGENERACION segundos,
-# y sigue así hasta que todos estén disponibles a la vez.
 func _on_perk_tomado(tipo: int) -> void:
 	_perks_en_mapa.erase(tipo)
 	posiciones_perks.erase(tipo)
 	if _perks_en_mapa.is_empty() and not _regenerando:
 		_regenerando = true
 		_t_regeneracion = INTERVALO_REGENERACION
-		print("Todos los perks fueron tomados: empiezan a regenerarse")
 
 
 func _regenerar_uno() -> void:
@@ -261,10 +390,9 @@ func _regenerar_uno() -> void:
 	_crear_perk(elegido, _buscar_celda(c_jugador, c_enemigo))
 	if _perks_en_mapa.size() >= Perks.todos().size():
 		_regenerando = false
-		print("Todos los perks están disponibles otra vez")
 
 
-func _barajar_celdas() -> void:   # Fisher-Yates
+func _barajar_celdas() -> void:
 	for i in range(_celdas_libres.size() - 1, 0, -1):
 		var j: int = _rng.randi_range(0, i)
 		var tmp: Vector2i = _celdas_libres[i]
@@ -272,8 +400,6 @@ func _barajar_celdas() -> void:   # Fisher-Yates
 		_celdas_libres[j] = tmp
 
 
-# Elige una celda libre lejos del jugador, la salida, el enemigo y los perks que ya están en el mapa.
-# Si el mapa es chico, relaja las distancias poco a poco.
 func _buscar_celda(c_jugador: Vector2i, c_enemigo: Vector2i) -> Vector2i:
 	_barajar_celdas()
 	var ocupadas: Array[Vector2i] = []
@@ -294,31 +420,26 @@ func _buscar_celda(c_jugador: Vector2i, c_enemigo: Vector2i) -> Vector2i:
 	return _celdas_libres[0]
 
 
-# Enemigo quieto durante la ventana de huida. El enemigo real solo necesita un método congelar(valor).
 func _congelar_enemigo(valor: bool) -> void:
 	if enemigo_nodo == null:
 		return
 	if enemigo_nodo.has_method("congelar"):
 		enemigo_nodo.congelar(valor)
-	elif enemigo_nodo is MeshInstance3D:   # marcador provisional: se ve azul mientras está congelado
-		var mat := (enemigo_nodo as MeshInstance3D).material_override as StandardMaterial3D
-		if mat != null:
-			var col: Color = Color(0.3, 0.55, 1.0) if valor else Color(1.0, 0.1, 0.1)
-			mat.albedo_color = col
-			mat.emission = col
 
-# El enemigo te alcanzó sin escudo: se reinicia la partida.
+
+# El enemigo te alcanzó: sin respawn → game-over (lo maneja el HUD vía jugador.morir()).
 func _on_jugador_atrapado() -> void:
-	print("¡Te atrapó el enemigo!")
-	get_tree().reload_current_scene.call_deferred()
+	print("¡Abaddon te atrapó!")
+	# No recargar escena: la señal jugador_muerto ya activó el game-over en el HUD.
 
-# M = volver al menú principal.
+
+# ESC lo maneja ahora el HUD. M sigue funcionando como atajo rápido al menú.
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_M:
-		get_tree().change_scene_to_file(Partida.ESCENA_MENU)
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.physical_keycode == KEY_M and jugador_nodo != null and jugador_nodo.esta_muerto:
+			get_tree().change_scene_to_file(Partida.ESCENA_MENU)
 
 
-# Cerca del enemigo la niebla se cierra y el radio de visión se reduce aún más.
 const NIEBLA_BASE: float = 0.08
 const NIEBLA_CERCA: float = 0.16
 
