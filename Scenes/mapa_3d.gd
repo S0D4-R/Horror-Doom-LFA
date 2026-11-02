@@ -1,7 +1,7 @@
 class_name Mapa3D
 extends Node3D
 # Construye en 3D un mapa de muros y pasillos a partir de un .txt de unos y ceros.
-
+ 
 @export_file("*.txt") var archivo_mapa: String = "res://Maps/mapa2_cementerio.txt"
 @export var tam_celda: float = 2.0   # metros por celda
 @export var alto_muro: float = 3.0
@@ -9,19 +9,19 @@ extends Node3D
 @export var solo_escenografia: bool = false   # true = solo muros y suelo (sin jugador, HUD ni perks): lo usa el menú 3D
 @export var con_techo: bool = true   # false = cielo abierto (cementerio, ciudad)
 @export var semilla: int = 0   # 0 = perks en posiciones distintas cada partida; otro número = siempre las mismas
-
+ 
 var matriz: Array = []
 var jugador: Vector2i
 var salida: Vector2i
 var enemigo: Vector2i
 var jugador_nodo: Jugador
 var modo: int = Partida.Modo.U_R_D4MN3D
-var enemigo_nodo: Node3D
+var enemigo_nodo: Perseguidor
 var hud: HUD
 var _env: Environment
 var posiciones_perks: Dictionary = {}   # tipo -> celda, útil para el informe
-
-
+ 
+ 
 func _ready() -> void:
 	if Partida.activa and not solo_escenografia:   # llegamos desde el menú: usar el mapa y el modo elegidos
 		archivo_mapa = Partida.archivo_mapa()
@@ -40,7 +40,10 @@ func _ready() -> void:
 		return
 	if modo == Partida.Modo.U_R_D4MN3D:   # en SUPERVIVENCIA no hay salida
 		_marcador(salida, Color(0.2, 0.4, 1.0))
-	enemigo_nodo = _marcador(enemigo, Color(1.0, 0.1, 0.1))
+	enemigo_nodo = Perseguidor.new()
+	enemigo_nodo.mapa = self
+	enemigo_nodo.position = celda_a_mundo(enemigo)
+	add_child(enemigo_nodo)
 	_colocar_perks()
 	if camara_cenital:
 		_marcador(jugador, Color(0.1, 0.9, 0.2))
@@ -48,13 +51,15 @@ func _ready() -> void:
 	else:
 		_agregar_ambiente()
 		_agregar_jugador()
-
-
+		enemigo_nodo.jugador = jugador_nodo
+		enemigo_nodo.alcanzo_jugador.connect(_on_jugador_atrapado)
+ 
+ 
 # Centro de una celda en coordenadas del mundo 3D (lo usarán el jugador y el enemigo).
 func celda_a_mundo(c: Vector2i) -> Vector3:
 	return Vector3((c.x + 0.5) * tam_celda, 0.0, (c.y + 0.5) * tam_celda)
-
-
+ 
+ 
 # Un muro solo se dibuja si toca (incluso en diagonal) alguna celda de piso.
 func _es_visible(x: int, y: int) -> bool:
 	var cols: int = matriz[0].size()
@@ -66,8 +71,8 @@ func _es_visible(x: int, y: int) -> bool:
 				if matriz[ny][nx] == 0:
 					return true
 	return false
-
-
+ 
+ 
 # Une muros consecutivos de una fila en una sola caja para tener muchos menos nodos.
 func _construir_muros() -> void:
 	var mat := _material(Color(0.55, 0.55, 0.6))
@@ -86,8 +91,8 @@ func _construir_muros() -> void:
 					mat, true)
 			else:
 				x += 1
-
-
+ 
+ 
 func _construir_suelo_y_techo() -> void:
 	var ancho: float = matriz[0].size() * tam_celda
 	var largo: float = matriz.size() * tam_celda
@@ -96,8 +101,8 @@ func _construir_suelo_y_techo() -> void:
 	if con_techo and not camara_cenital:   # en vista cenital el techo taparía todo
 		_crear_bloque(Vector3(ancho / 2.0, alto_muro + 0.1, largo / 2.0), Vector3(ancho, 0.2, largo),
 			_material(Color(0.08, 0.08, 0.09)), false)
-
-
+ 
+ 
 func _crear_bloque(pos: Vector3, tam: Vector3, mat: Material, con_colision: bool) -> void:
 	var cuerpo := StaticBody3D.new()
 	cuerpo.position = pos
@@ -114,14 +119,14 @@ func _crear_bloque(pos: Vector3, tam: Vector3, mat: Material, con_colision: bool
 		col.shape = forma
 		cuerpo.add_child(col)
 	add_child(cuerpo)
-
-
+ 
+ 
 func _material(color: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = color
 	return m
-
-
+ 
+ 
 # Esfera de color provisional: azul = salida, rojo = enemigo, verde = jugador (solo en vista cenital).
 func _marcador(c: Vector2i, color: Color) -> MeshInstance3D:
 	var m := MeshInstance3D.new()
@@ -136,8 +141,8 @@ func _marcador(c: Vector2i, color: Color) -> MeshInstance3D:
 	m.position = celda_a_mundo(c) + Vector3(0.0, tam_celda * 0.3, 0.0)
 	add_child(m)
 	return m
-
-
+ 
+ 
 func _agregar_jugador() -> void:
 	jugador_nodo = Jugador.new()
 	jugador_nodo.tam_celda = tam_celda
@@ -152,8 +157,8 @@ func _agregar_jugador() -> void:
 	hud = HUD.new()
 	add_child(hud)
 	hud.conectar(jugador_nodo, enemigo_nodo)
-
-
+ 
+ 
 # Oscuridad casi total y niebla: la linterna del jugador es la luz principal.
 func _agregar_ambiente() -> void:
 	var env := Environment.new()
@@ -169,8 +174,8 @@ func _agregar_ambiente() -> void:
 	we.environment = env
 	_env = env
 	add_child(we)
-
-
+ 
+ 
 func _agregar_camara_cenital() -> void:
 	var ancho: float = matriz[0].size() * tam_celda
 	var largo: float = matriz.size() * tam_celda
@@ -302,6 +307,10 @@ func _congelar_enemigo(valor: bool) -> void:
 			mat.albedo_color = col
 			mat.emission = col
 
+# El enemigo te alcanzó sin escudo: se reinicia la partida.
+func _on_jugador_atrapado() -> void:
+	print("¡Te atrapó el enemigo!")
+	get_tree().reload_current_scene.call_deferred()
 
 # M = volver al menú principal.
 func _unhandled_input(event: InputEvent) -> void:
