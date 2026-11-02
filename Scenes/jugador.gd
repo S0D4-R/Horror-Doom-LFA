@@ -5,7 +5,7 @@ extends CharacterBody3D
 # Shift = correr, 1 = linterna, 2 = pistola, RUEDA DEL MOUSE = alternar linterna/pistola,
 # R = radar, clic izquierdo = disparar, Esc = soltar mouse.
 
-signal celda_cambiada(celda: Vector2i)   # entra a una celda nueva (cuenta como un paso)
+signal celda_cambiada(celda: Vector2i)    # entra a una celda nueva (cuenta como un paso)
 signal perk_recogido(tipo: int)
 signal arma_cambiada(arma: int)
 signal disparo_realizado
@@ -20,7 +20,7 @@ enum Arma { LINTERNA, PISTOLA }
 const LINTERNA_ENERGIA: float = 1.8
 const LINTERNA_ALCANCE: float = 14.0
 const LINTERNA_ANGULO: float = 30.0
-const LINTERNA_CON_PISTOLA: float = 0.4   # fracción de luz cuando llevas la pistola en la mano
+const LINTERNA_CON_PISTOLA: float = 0.4    # fracción de luz cuando llevas la pistola en la mano
 
 # --- Ajustes de los perks ---
 const BALAS_POR_PISTOLA: int = 6
@@ -106,7 +106,7 @@ func _ready() -> void:
 	camara.add_child(linterna)
 	_actualizar_linterna()
 
-	_flash = OmniLight3D.new()   # destello del disparo
+	_flash = OmniLight3D.new()    # destello del disparo
 	_flash.light_color = Color(1.0, 0.8, 0.4)
 	_flash.omni_range = 8.0
 	_flash.light_energy = 0.0
@@ -170,7 +170,7 @@ func _physics_process(delta: float) -> void:
 	_enfriamiento = maxf(0.0, _enfriamiento - delta)
 	if radar_activo:
 		radar_energia -= delta
-		if radar_energia <= 0.0:   # se agota la batería: se pierde el perk
+		if radar_energia <= 0.0:    # se agota la batería: se pierde el perk
 			radar_energia = 0.0
 			radar_activo = false
 			tiene_radar = false
@@ -179,6 +179,12 @@ func _physics_process(delta: float) -> void:
 	if c != celda_actual:
 		celda_actual = c
 		celda_cambiada.emit(c)
+		
+		# --- NOTIFICAR AL AUTÓMATA DEL ENEMIGO ---
+		# Busca el nodo del enemigo en la escena (ajusta la ruta si es necesario)
+		var enemigo = get_node_or_null("../EnemigoPerseguidor")
+		if enemigo and enemigo.has_method("registrar_movimiento_jugador"):
+			enemigo.registrar_movimiento_jugador()
 
 
 # ---------- Persecución: cercanía, respiración, linterna y ventana de huida ----------
@@ -338,7 +344,7 @@ func disparar() -> void:
 	var consulta := PhysicsRayQueryParameters3D.create(origen, destino, 1, excluir)
 	var impacto: Dictionary = get_world_3d().direct_space_state.intersect_ray(consulta)
 	if not impacto.is_empty() and impacto["collider"].has_method("recibir_disparo"):
-		impacto["collider"].recibir_disparo()   # el enemigo implementará este método
+		impacto["collider"].recibir_disparo()    # el enemigo implementará este método
 
 
 func _actualizar_linterna() -> void:
