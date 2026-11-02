@@ -19,6 +19,7 @@ var modo: int = Partida.Modo.ESCAPAR
 var enemigo_nodo: Perseguidor
 var hud: HUD
 var posiciones_perks: Dictionary = {}   # tipo -> celda, útil para el informe
+var ruta_jugador: Array[Vector2i] = []   # modo DIJKSTRA: camino más corto del jugador a la salida
  
  
 func _ready() -> void:
@@ -37,7 +38,7 @@ func _ready() -> void:
 	_construir_suelo_y_techo()
 	if solo_escenografia:
 		return
-	if modo == Partida.Modo.ESCAPAR:   # en SUPERVIVENCIA no hay salida
+	if modo == Partida.Modo.ESCAPAR or modo == Partida.Modo.DIJKSTRA:   # en SUPERVIVENCIA no hay salida
 		_marcador(salida, Color(0.2, 0.4, 1.0))
 	enemigo_nodo = Perseguidor.new()
 	enemigo_nodo.mapa = self
@@ -57,6 +58,19 @@ func _ready() -> void:
 # Centro de una celda en coordenadas del mundo 3D (lo usarán el jugador y el enemigo).
 func celda_a_mundo(c: Vector2i) -> Vector3:
 	return Vector3((c.x + 0.5) * tam_celda, 0.0, (c.y + 0.5) * tam_celda)
+ 
+ 
+func es_dijkstra() -> bool:
+	return modo == Partida.Modo.DIJKSTRA
+ 
+ 
+# Dijkstra desde la celda del jugador hasta la salida (la usan el radar y la vista del grafo).
+func _recalcular_ruta_jugador() -> void:
+	ruta_jugador = Grafo.dijkstra(matriz, jugador_nodo.celda_actual, salida)
+ 
+ 
+func _on_celda_jugador(_celda: Vector2i) -> void:
+	_recalcular_ruta_jugador()
  
  
 # Un muro solo se dibuja si toca (incluso en diagonal) alguna celda de piso.
@@ -148,9 +162,12 @@ func _agregar_jugador() -> void:
 	jugador_nodo.position = celda_a_mundo(jugador)
 	jugador_nodo.celda_actual = jugador   # así la celda inicial no cuenta como un paso
 	add_child(jugador_nodo)
+	if es_dijkstra():   # la ruta a la salida se recalcula cada vez que el jugador cambia de celda
+		jugador_nodo.celda_cambiada.connect(_on_celda_jugador)
+		_recalcular_ruta_jugador()
 	hud = HUD.new()
 	add_child(hud)
-	hud.conectar(jugador_nodo, enemigo_nodo)
+	hud.conectar(jugador_nodo, enemigo_nodo, self)
  
  
 # Oscuridad casi total y niebla: la linterna del jugador es la luz principal.

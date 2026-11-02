@@ -1,7 +1,8 @@
 class_name HUD
 extends CanvasLayer
 # HUD estilo Doom: mano con arma al centro, barra de estado abajo, radar arriba a la derecha.
-# Se construye por código; solo necesita llamar a conectar(jugador, enemigo).
+# Se construye por código; solo necesita llamar a conectar(jugador, enemigo[, mapa]).
+# En el modo DIJKSTRA (se pasa el mapa) el radar siempre está visible con las rutas y L abre la vista del grafo.
 
 const ALTO_BARRA: float = 84.0
 const COLOR_FONDO := Color(0.14, 0.11, 0.10)
@@ -18,6 +19,9 @@ var _mano: TextureRect
 var _tex_linterna: Texture2D
 var _tex_pistola: Texture2D
 var _radar: RadarHUD
+var _grafo_vista: GrafoVista
+var _lbl_ayuda: Label
+var _dijkstra: bool = false
 var _mira: ColorRect
 var _flash: ColorRect
 var _lbl_mensaje: Label
@@ -43,16 +47,39 @@ func _ready() -> void:
 	_crear_mensaje()
 
 
-func conectar(j: Jugador, e: Node3D) -> void:
+func conectar(j: Jugador, e: Node3D, m: Mapa3D = null) -> void:
 	jugador = j
 	enemigo = e
 	_radar.jugador = j
 	_radar.objetivo = e
+	if m != null and m.es_dijkstra():
+		_activar_modo_dijkstra(m, j, e)
 	j.perk_recogido.connect(_on_perk_recogido)
 	j.arma_cambiada.connect(_on_arma_cambiada)
 	j.disparo_realizado.connect(_on_disparo)
 	j.escudo_roto.connect(_on_escudo_roto)
 	_actualizar_textura()
+
+
+# Modo DIJKSTRA: radar siempre visible con las rutas, vista del grafo con L y ayuda actualizada.
+func _activar_modo_dijkstra(m: Mapa3D, j: Jugador, e: Node3D) -> void:
+	_dijkstra = true
+	_radar.mapa = m
+	_grafo_vista = GrafoVista.new()
+	_grafo_vista.visible = false
+	_raiz.add_child(_grafo_vista)
+	_grafo_vista.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_grafo_vista.offset_bottom = -ALTO_BARRA   # deja a la vista la barra de estado
+	_grafo_vista.preparar(m, j, e as Perseguidor)
+	_lbl_ayuda.text = "1 Linterna · 2 Pistola · R Radar · L Grafo\nClic: disparar · M: menú"
+	_mostrar("L: ver el grafo del laberinto")
+
+
+# L = mostrar / ocultar el grafo (solo en el modo DIJKSTRA).
+func _unhandled_input(event: InputEvent) -> void:
+	if _dijkstra and event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_L:
+		_grafo_vista.visible = not _grafo_vista.visible
 
 
 # ---------- Construcción ----------
@@ -99,9 +126,9 @@ func _crear_barra() -> void:
 	fila.add_child(_lbl_arma)
 	for tipo in PERKS:
 		fila.add_child(_crear_slot(tipo))
-	var ayuda := _etiqueta("1 Linterna · 2 Pistola · R Radar\nClic: disparar · M: menú", 12, Color(0.7, 0.7, 0.7))
-	ayuda.custom_minimum_size = Vector2(250, 0)
-	fila.add_child(ayuda)
+	_lbl_ayuda = _etiqueta("1 Linterna · 2 Pistola · R Radar\nClic: disparar · M: menú", 12, Color(0.7, 0.7, 0.7))
+	_lbl_ayuda.custom_minimum_size = Vector2(250, 0)
+	fila.add_child(_lbl_ayuda)
 
 
 func _crear_slot(tipo: int) -> PanelContainer:
@@ -176,7 +203,7 @@ func _process(delta: float) -> void:
 		return
 	_actualizar_barra()
 	_actualizar_mano(delta)
-	_radar.visible = jugador.radar_activo
+	_radar.visible = jugador.radar_activo or _dijkstra   # en DIJKSTRA siempre se ve
 	_mira.visible = jugador.arma_actual == Jugador.Arma.PISTOLA
 	if _mensaje_t > 0.0:
 		_mensaje_t -= delta

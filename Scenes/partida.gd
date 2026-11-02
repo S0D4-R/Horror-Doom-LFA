@@ -3,7 +3,7 @@ extends RefCounted
 # Datos compartidos entre el menú y el juego. Usa variables estáticas, así que NO hace falta
 # registrar un autoload: sobreviven al cambio de escena.
 
-enum Modo { ESCAPAR, SUPERVIVENCIA }   # el orden debe coincidir con MODOS
+enum Modo { ESCAPAR, SUPERVIVENCIA, DIJKSTRA }   # el orden debe coincidir con MODOS
 
 const ESCENA_MENU: String = "res://Scenes/menu.tscn"
 const ESCENA_JUEGO: String = "res://Scenes/map_palace.tscn"
@@ -19,7 +19,7 @@ const MODOS: Array = [
 		"desc": "No hay salida. Aguanta el mayor tiempo posible mientras los perks te ayudan a seguir con vida.",
 	},
 	{
-		"nombre": "MODO DIKJSTRA",
+		"nombre": "MODO DIJKSTRA",
 		"desc": "Mira detrás del telón, un vistazo a lo que nunca te hubieras imaginado...",
 	},
 ]
