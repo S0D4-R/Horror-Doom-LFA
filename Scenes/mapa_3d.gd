@@ -15,9 +15,10 @@ var jugador: Vector2i
 var salida: Vector2i
 var enemigo: Vector2i
 var jugador_nodo: Jugador
-var modo: int = Partida.Modo.ESCAPAR
+var modo: int = Partida.Modo.U_R_D4MN3D
 var enemigo_nodo: Node3D
 var hud: HUD
+var _env: Environment
 var posiciones_perks: Dictionary = {}   # tipo -> celda, útil para el informe
 
 
@@ -37,7 +38,7 @@ func _ready() -> void:
 	_construir_suelo_y_techo()
 	if solo_escenografia:
 		return
-	if modo == Partida.Modo.ESCAPAR:   # en SUPERVIVENCIA no hay salida
+	if modo == Partida.Modo.U_R_D4MN3D:   # en SUPERVIVENCIA no hay salida
 		_marcador(salida, Color(0.2, 0.4, 1.0))
 	enemigo_nodo = _marcador(enemigo, Color(1.0, 0.1, 0.1))
 	_colocar_perks()
@@ -142,7 +143,12 @@ func _agregar_jugador() -> void:
 	jugador_nodo.tam_celda = tam_celda
 	jugador_nodo.position = celda_a_mundo(jugador)
 	jugador_nodo.celda_actual = jugador   # así la celda inicial no cuenta como un paso
+	jugador_nodo.enemigo = enemigo_nodo   # para medir la distancia al enemigo
+	jugador_nodo.efectos_cercania = (modo == Partida.Modo.U_R_D4MN3D)   # efectos solo con un enemigo
 	add_child(jugador_nodo)
+	# Mientras dura la huida (colores invertidos) el enemigo se queda quieto.
+	jugador_nodo.ventana_huida_iniciada.connect(_congelar_enemigo.bind(true))
+	jugador_nodo.ventana_huida_terminada.connect(_congelar_enemigo.bind(false))
 	hud = HUD.new()
 	add_child(hud)
 	hud.conectar(jugador_nodo, enemigo_nodo)
@@ -161,6 +167,7 @@ func _agregar_ambiente() -> void:
 	env.fog_density = 0.08
 	var we := WorldEnvironment.new()
 	we.environment = env
+	_env = env
 	add_child(we)
 
 
@@ -179,59 +186,139 @@ func _agregar_camara_cenital() -> void:
 	add_child(luz)
 
 
-# ---------- Perks en posiciones aleatorias ----------
+# ---------- Perks en posiciones aleatorias, con regeneración ----------
+
+const INTERVALO_REGENERACION: float = 20.0   # segundos entre un perk que reaparece y el siguiente
+
+var _rng := RandomNumberGenerator.new()
+var _celdas_libres: Array[Vector2i] = []
+var _perks_en_mapa: Dictionary = {}   # tipo -> PerkItem disponible ahora mismo
+var _regenerando: bool = false
+var _t_regeneracion: float = 0.0
+
 
 func _distancia(a: Vector2i, b: Vector2i) -> int:
 	return absi(a.x - b.x) + absi(a.y - b.y)   # distancia Manhattan en celdas
 
 
+func _celda_de(nodo: Node3D) -> Vector2i:
+	return Vector2i(floori(nodo.global_position.x / tam_celda), floori(nodo.global_position.z / tam_celda))
+
+
 # Coloca un perk de cada tipo en celdas libres al azar, lejos del jugador, la salida,
-# el enemigo y los otros perks. Si el mapa es chico, relaja las distancias poco a poco.
+# el enemigo y los otros perks.
 func _colocar_perks() -> void:
-	var rng := RandomNumberGenerator.new()
 	if semilla == 0:
-		rng.randomize()
+		_rng.randomize()
 	else:
-		rng.seed = semilla
-	var libres: Array[Vector2i] = []
+		_rng.seed = semilla
 	for y in matriz.size():
 		for x in matriz[y].size():
 			if matriz[y][x] == 0:
-				libres.append(Vector2i(x, y))
-	for i in range(libres.size() - 1, 0, -1):   # barajar (Fisher-Yates)
-		var j: int = rng.randi_range(0, i)
-		var tmp: Vector2i = libres[i]
-		libres[i] = libres[j]
-		libres[j] = tmp
-	var elegidas: Array[Vector2i] = []
-	for tipo in [Perks.Tipo.PISTOLA, Perks.Tipo.RADAR, Perks.Tipo.ESCUDO]:
-		var celda: Vector2i = _buscar_celda(libres, elegidas)
-		elegidas.append(celda)
-		posiciones_perks[tipo] = celda
-		var item := PerkItem.new()
-		item.tipo = tipo
-		item.position = celda_a_mundo(celda)
-		add_child(item)
-		print("Perk %s en la celda %s" % [Perks.nombre(tipo), celda])
+				_celdas_libres.append(Vector2i(x, y))
+	for tipo in Perks.todos():
+		_crear_perk(tipo, _buscar_celda(jugador, enemigo))
 
 
-func _buscar_celda(libres: Array[Vector2i], elegidas: Array[Vector2i]) -> Vector2i:
+func _crear_perk(tipo: int, celda: Vector2i) -> void:
+	var item := PerkItem.new()
+	item.tipo = tipo
+	item.position = celda_a_mundo(celda)
+	item.recogido.connect(_on_perk_tomado)
+	add_child(item)
+	_perks_en_mapa[tipo] = item
+	posiciones_perks[tipo] = celda
+	print("Perk %s en la celda %s" % [Perks.nombre(tipo), celda])
+
+
+# Cuando se toman TODOS los perks, empieza a reaparecer uno cada INTERVALO_REGENERACION segundos,
+# y sigue así hasta que todos estén disponibles a la vez.
+func _on_perk_tomado(tipo: int) -> void:
+	_perks_en_mapa.erase(tipo)
+	posiciones_perks.erase(tipo)
+	if _perks_en_mapa.is_empty() and not _regenerando:
+		_regenerando = true
+		_t_regeneracion = INTERVALO_REGENERACION
+		print("Todos los perks fueron tomados: empiezan a regenerarse")
+
+
+func _regenerar_uno() -> void:
+	var faltan: Array = []
+	for tipo in Perks.todos():
+		if not _perks_en_mapa.has(tipo):
+			faltan.append(tipo)
+	if faltan.is_empty():
+		_regenerando = false
+		return
+	var elegido: int = faltan[_rng.randi_range(0, faltan.size() - 1)]
+	var c_jugador: Vector2i = jugador_nodo.celda_actual if jugador_nodo != null else jugador
+	var c_enemigo: Vector2i = _celda_de(enemigo_nodo) if enemigo_nodo != null else enemigo
+	_crear_perk(elegido, _buscar_celda(c_jugador, c_enemigo))
+	if _perks_en_mapa.size() >= Perks.todos().size():
+		_regenerando = false
+		print("Todos los perks están disponibles otra vez")
+
+
+func _barajar_celdas() -> void:   # Fisher-Yates
+	for i in range(_celdas_libres.size() - 1, 0, -1):
+		var j: int = _rng.randi_range(0, i)
+		var tmp: Vector2i = _celdas_libres[i]
+		_celdas_libres[i] = _celdas_libres[j]
+		_celdas_libres[j] = tmp
+
+
+# Elige una celda libre lejos del jugador, la salida, el enemigo y los perks que ya están en el mapa.
+# Si el mapa es chico, relaja las distancias poco a poco.
+func _buscar_celda(c_jugador: Vector2i, c_enemigo: Vector2i) -> Vector2i:
+	_barajar_celdas()
+	var ocupadas: Array[Vector2i] = []
+	for tipo in _perks_en_mapa:
+		ocupadas.append(posiciones_perks[tipo])
 	for factor in [1.0, 0.6, 0.3, 0.0]:
-		for c in libres:
-			if _distancia(c, jugador) < 10 * factor or _distancia(c, salida) < 6 * factor \
-					or _distancia(c, enemigo) < 6 * factor:
+		for c in _celdas_libres:
+			if _distancia(c, c_jugador) < 10 * factor or _distancia(c, salida) < 6 * factor \
+					or _distancia(c, c_enemigo) < 6 * factor:
 				continue
 			var cerca: bool = false
-			for e in elegidas:
+			for e in ocupadas:
 				if _distancia(c, e) < 15 * factor:
 					cerca = true
 					break
 			if not cerca:
 				return c
-	return libres[0]
+	return _celdas_libres[0]
+
+
+# Enemigo quieto durante la ventana de huida. El enemigo real solo necesita un método congelar(valor).
+func _congelar_enemigo(valor: bool) -> void:
+	if enemigo_nodo == null:
+		return
+	if enemigo_nodo.has_method("congelar"):
+		enemigo_nodo.congelar(valor)
+	elif enemigo_nodo is MeshInstance3D:   # marcador provisional: se ve azul mientras está congelado
+		var mat := (enemigo_nodo as MeshInstance3D).material_override as StandardMaterial3D
+		if mat != null:
+			var col: Color = Color(0.3, 0.55, 1.0) if valor else Color(1.0, 0.1, 0.1)
+			mat.albedo_color = col
+			mat.emission = col
 
 
 # M = volver al menú principal.
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_M:
 		get_tree().change_scene_to_file(Partida.ESCENA_MENU)
+
+
+# Cerca del enemigo la niebla se cierra y el radio de visión se reduce aún más.
+const NIEBLA_BASE: float = 0.08
+const NIEBLA_CERCA: float = 0.16
+
+
+func _process(delta: float) -> void:
+	if _env != null and jugador_nodo != null:
+		_env.fog_density = lerpf(NIEBLA_BASE, NIEBLA_CERCA, jugador_nodo.cercania)
+	if _regenerando:
+		_t_regeneracion -= delta
+		if _t_regeneracion <= 0.0:
+			_t_regeneracion = INTERVALO_REGENERACION
+			_regenerar_uno()

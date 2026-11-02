@@ -9,6 +9,35 @@ const COLOR_BORDE := Color(0.45, 0.12, 0.10)
 const COLOR_ROJO := Color(0.85, 0.12, 0.10)
 const PERKS: Array = [Perks.Tipo.PISTOLA, Perks.Tipo.RADAR, Perks.Tipo.ESCUDO]
 
+# Cerca del enemigo: la imagen se vuelve rojiza (más en los bordes) y late más rápido mientras más cerca.
+const SHADER_ROJO: String = """
+shader_type canvas_item;
+uniform sampler2D pantalla : hint_screen_texture, repeat_disable, filter_linear;
+uniform float intensidad = 0.0;
+void fragment() {
+	vec3 c = texture(pantalla, SCREEN_UV).rgb;
+	float vig = smoothstep(0.15, 0.85, length(SCREEN_UV - vec2(0.5)) * 1.35);
+	float g = dot(c, vec3(0.299, 0.587, 0.114));
+	vec3 rojo = vec3(g * 1.4 + 0.08, g * 0.16, g * 0.16);
+	float k = clamp(intensidad * (0.45 + 0.75 * vig), 0.0, 1.0);
+	vec3 r = mix(c, rojo, k * 0.9);
+	r += vec3(0.35, 0.0, 0.0) * vig * intensidad;
+	float pulso = 0.92 + 0.08 * sin(TIME * (3.0 + 6.0 * intensidad));
+	COLOR = vec4(r * pulso, 1.0);
+}
+"""
+
+# Tras gastar el escudo: colores invertidos durante la ventana de huida.
+const SHADER_INVERTIDO: String = """
+shader_type canvas_item;
+uniform sampler2D pantalla : hint_screen_texture, repeat_disable, filter_linear;
+uniform float fuerza = 1.0;
+void fragment() {
+	vec3 c = texture(pantalla, SCREEN_UV).rgb;
+	COLOR = vec4(mix(c, vec3(1.0) - c, fuerza), 1.0);
+}
+"""
+
 var jugador: Jugador
 var enemigo: Node3D
 var desliz: float = 0.0   # 0 = arma arriba, 1 = arma bajada (animación de cambio de arma)
@@ -22,6 +51,10 @@ var _mira: ColorRect
 var _flash: ColorRect
 var _lbl_mensaje: Label
 var _lbl_arma: Label
+var _fx_rojo: ColorRect
+var _pentagrama: MenuSigilo
+var _fx_invertido: ColorRect
+var _lbl_huida: Label
 var _slots: Dictionary = {}
 var _retroceso: float = 0.0
 var _t_bob: float = 0.0
@@ -35,12 +68,14 @@ func _ready() -> void:
 	_raiz.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_raiz)
 	_raiz.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_crear_efecto_rojo()
 	_crear_mano()
 	_crear_flash()
 	_crear_barra()
 	_crear_radar()
 	_crear_mira()
 	_crear_mensaje()
+	_crear_efecto_invertido()
 
 
 func conectar(j: Jugador, e: Node3D) -> void:
@@ -106,7 +141,8 @@ func _crear_barra() -> void:
 
 func _crear_slot(tipo: int) -> PanelContainer:
 	var p := PanelContainer.new()
-	p.custom_minimum_size = Vector2(130, 0)
+	var icono: Texture2D = Perks.icono(tipo)
+	p.custom_minimum_size = Vector2(176 if icono != null else 130, 0)
 	var estilo := StyleBoxFlat.new()
 	estilo.bg_color = Color(0.15, 0.15, 0.15)
 	estilo.border_color = Color(0.3, 0.3, 0.3)
@@ -115,11 +151,26 @@ func _crear_slot(tipo: int) -> PanelContainer:
 	p.add_theme_stylebox_override("panel", estilo)
 	var v := VBoxContainer.new()
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	p.add_child(v)
+	var img: TextureRect = null
+	if icono != null:   # ícono a la izquierda y, a su derecha, el nombre y el valor
+		var fila := HBoxContainer.new()
+		fila.add_theme_constant_override("separation", 8)
+		p.add_child(fila)
+		img = TextureRect.new()
+		img.texture = icono
+		img.custom_minimum_size = Vector2(46, 46)
+		img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		img.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		img.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fila.add_child(img)
+		fila.add_child(v)
+	else:
+		p.add_child(v)
 	v.add_child(_etiqueta(Perks.nombre(tipo).to_upper(), 14, Perks.color(tipo)))
 	var valor := _etiqueta("—", 20, Color.WHITE)
 	v.add_child(valor)
-	_slots[tipo] = {"estilo": estilo, "valor": valor}
+	_slots[tipo] = {"estilo": estilo, "valor": valor, "icono": img}
 	return p
 
 
@@ -176,6 +227,7 @@ func _process(delta: float) -> void:
 		return
 	_actualizar_barra()
 	_actualizar_mano(delta)
+	_actualizar_efectos()
 	_radar.visible = jugador.radar_activo
 	_mira.visible = jugador.arma_actual == Jugador.Arma.PISTOLA
 	if _mensaje_t > 0.0:
@@ -198,6 +250,9 @@ func _set_slot(tipo: int, tiene: bool, texto: String, resaltado: bool) -> void:
 	var valor: Label = s["valor"]
 	var color: Color = Perks.color(tipo)
 	valor.text = texto if tiene else "—"
+	var ic: TextureRect = s["icono"]   # el ícono se oscurece mientras no tienes el perk
+	if ic != null:
+		ic.modulate = Color.WHITE if tiene else Color(0.3, 0.3, 0.3, 0.8)
 	estilo.bg_color = color.darkened(0.7) if tiene else Color(0.15, 0.15, 0.15)
 	if resaltado:
 		estilo.border_color = color
@@ -258,3 +313,67 @@ func _on_disparo() -> void:
 
 func _on_escudo_roto() -> void:
 	_mostrar("¡ESCUDO ROTO!")
+
+
+# ---------- Efectos de persecución ----------
+
+func _material_shader(codigo: String) -> ShaderMaterial:
+	var sh := Shader.new()
+	sh.code = codigo
+	var m := ShaderMaterial.new()
+	m.shader = sh
+	return m
+
+
+func _crear_efecto_rojo() -> void:
+	_fx_rojo = ColorRect.new()
+	_fx_rojo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_rojo.material = _material_shader(SHADER_ROJO)
+	_fx_rojo.visible = false
+	_raiz.add_child(_fx_rojo)
+	_fx_rojo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pentagrama = MenuSigilo.new()   # el mismo círculo ritual del menú, aquí a pantalla completa
+	_pentagrama.intensidad = 0.0
+	_pentagrama.visible = false
+	_raiz.add_child(_pentagrama)
+	_pentagrama.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+func _crear_efecto_invertido() -> void:
+	_fx_invertido = ColorRect.new()
+	_fx_invertido.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_invertido.material = _material_shader(SHADER_INVERTIDO)
+	_fx_invertido.visible = false
+	_raiz.add_child(_fx_invertido)
+	_fx_invertido.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_lbl_huida = _etiqueta("", 72, Color(1.0, 0.95, 0.85))   # contador de la ventana de huida
+	_lbl_huida.add_theme_color_override("font_outline_color", Color(0.7, 0.0, 0.05))
+	_lbl_huida.add_theme_constant_override("outline_size", 14)
+	_lbl_huida.visible = false
+	_raiz.add_child(_lbl_huida)
+	_lbl_huida.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_lbl_huida.offset_left = -350.0
+	_lbl_huida.offset_right = 350.0
+	_lbl_huida.offset_top = 100.0
+	_lbl_huida.offset_bottom = 200.0
+
+
+func _actualizar_efectos() -> void:
+	var huyendo: bool = jugador.en_ventana_huida
+	# Durante la huida el rojo se apaga: solo quedan los colores invertidos y el reloj.
+	var k: float = 0.0 if huyendo else jugador.cercania
+	var hay_rojo: bool = k > 0.01
+	_fx_rojo.visible = hay_rojo
+	_pentagrama.visible = hay_rojo
+	if hay_rojo:
+		(_fx_rojo.material as ShaderMaterial).set_shader_parameter("intensidad", k)
+		_pentagrama.intensidad = pow(k, 1.3) * 1.7   # más opaco mientras más cerca (hasta ~85 %)
+	_fx_invertido.visible = huyendo
+	_lbl_huida.visible = huyendo
+	if huyendo:
+		var t: float = jugador.tiempo_huida
+		var fuerza: float = 1.0
+		if t < 3.0 and fmod(t, 0.5) < 0.25:   # parpadea en los últimos 3 s para avisar
+			fuerza = 0.35
+		(_fx_invertido.material as ShaderMaterial).set_shader_parameter("fuerza", fuerza)
+		_lbl_huida.text = "¡HUYE!   %.1f" % t
