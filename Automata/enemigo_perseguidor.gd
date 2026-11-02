@@ -1,6 +1,5 @@
 class_name EnemigoPerseguidor
-extends CharacterBody3D # O Node3D / Area3D según cómo lo tengas estructurado
-
+extends CharacterBody3D 
 # Definición de estados del autómata
 enum Estado { IDLE, ESPERANDO, PERSIGUIENDO }
 var estado_actual: Estado = Estado.IDLE
