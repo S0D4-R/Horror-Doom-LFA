@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://b00hftjlqcvxj"
+path="res://.godot/imported/Spooky Sounds - Cemetery Bells [k3-Z84dFbB0].mp3-e99193ecdee00826ec6165e1bea51c7e.mp3str"
+
+[deps]
+
+source_file="res://Music/Spooky Sounds - Cemetery Bells [k3-Z84dFbB0].mp3"
+dest_files=["res://.godot/imported/Spooky Sounds - Cemetery Bells [k3-Z84dFbB0].mp3-e99193ecdee00826ec6165e1bea51c7e.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

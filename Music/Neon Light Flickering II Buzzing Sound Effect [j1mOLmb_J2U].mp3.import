@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://dvp8m8g7c7w8l"
+path="res://.godot/imported/Neon Light Flickering II Buzzing Sound Effect [j1mOLmb_J2U].mp3-08e6b98cba7e1b4b94b5805c28b08f88.mp3str"
+
+[deps]
+
+source_file="res://Music/Neon Light Flickering II Buzzing Sound Effect [j1mOLmb_J2U].mp3"
+dest_files=["res://.godot/imported/Neon Light Flickering II Buzzing Sound Effect [j1mOLmb_J2U].mp3-08e6b98cba7e1b4b94b5805c28b08f88.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4
