@@ -3,7 +3,7 @@ extends RefCounted
 # Datos compartidos entre el menú y el juego. Usa variables estáticas, así que NO hace falta
 # registrar un autoload: sobreviven al cambio de escena.
 
-enum Modo { ESCAPAR, SUPERVIVENCIA }   # el orden debe coincidir con MODOS
+enum Modo { U_R_D4MN3D, SUPERVIVENCIA }   # el orden debe coincidir con MODOS
 
 const ESCENA_MENU: String = "res://Scenes/menu.tscn"
 const ESCENA_JUEGO: String = "res://Scenes/map_palace.tscn"
@@ -11,16 +11,12 @@ const ESCENA_JUEGO: String = "res://Scenes/map_palace.tscn"
 # Reglas provisionales: se implementan en el juego según el modo elegido.
 const MODOS: Array = [
 	{
-		"nombre": "ESCAPAR",
-		"desc": "Encuentra la salida antes de que te alcance. Él avanza una celda por cada dos pasos tuyos.",
+		"nombre": "U R D4MN3D",
+		"desc": "Un solo enemigo te persigue sin descanso. Cuanto más cerca está, más se enrojece el mundo, más fuerte respiras y antes se apaga tu linterna. Escapa antes de que te alcance.",
 	},
 	{
 		"nombre": "SUPERVIVENCIA",
 		"desc": "No hay salida. Aguanta el mayor tiempo posible mientras los perks te ayudan a seguir con vida.",
-	},
-	{
-		"nombre": "MODO DIKJSTRA",
-		"desc": "Mira detrás del telón, un vistazo a lo que nunca te hubieras imaginado...",
 	},
 ]
 
@@ -56,7 +52,7 @@ const MAPAS: Array = [
 ]
 
 static var activa: bool = false      # true cuando se llegó al juego desde el menú
-static var modo: int = Modo.ESCAPAR
+static var modo: int = Modo.U_R_D4MN3D
 static var indice_mapa: int = 0
 
 

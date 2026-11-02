@@ -1,0 +1,9 @@
+Fuentes incluidas (todas bajo SIL Open Font License 1.1, uso y redistribución libres, incluso en juegos):
+
+- UnifrakturCook-Bold.ttf  -> UnifrakturCook, de j. 'mach' wust (basada en Unifraktur). Título gótico.
+- PirataOne-Regular.ttf    -> Pirata One, de Rodrigo Fuenzalida. Opciones y encabezados.
+- Cinzel-Regular.ttf       -> Cinzel, de Natanael Gama. Descripciones y ayudas.
+
+Fuente de descarga: https://fonts.google.com  (repositorio github.com/google/fonts).
+Los textos completos de la licencia están en los archivos OFL-*.txt.
+Menciónalas en el README del proyecto junto con los demás créditos.

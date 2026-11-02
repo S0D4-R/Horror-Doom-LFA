@@ -1,27 +1,47 @@
 class_name Jugador
 extends CharacterBody3D
-# Jugador en primera persona. Se construye solo: cuerpo, colisión, cámara y linterna.
+# Jugador en primera persona. Se construye solo: cuerpo, colisión, cámara, linterna y sonidos.
 # Controles: WASD / flechas = mover, A/D = deslizarse, flechas izq/der = girar, mouse = mirar,
-# Shift = correr, 1 = linterna, 2 = pistola, R = radar, clic izquierdo = disparar, Esc = soltar mouse.
+# Shift = correr, 1 = linterna, 2 = pistola, RUEDA DEL MOUSE = alternar linterna/pistola,
+# R = radar, clic izquierdo = disparar, Esc = soltar mouse.
 
-signal celda_cambiada(celda: Vector2i)   # entra a una celda nueva (cuenta como un paso)
+signal celda_cambiada(celda: Vector2i)    # entra a una celda nueva (cuenta como un paso)
 signal perk_recogido(tipo: int)
 signal arma_cambiada(arma: int)
 signal disparo_realizado
 signal escudo_roto
+signal ventana_huida_iniciada
+signal ventana_huida_terminada
+signal linterna_cambiada(encendida: bool)
 
 enum Arma { LINTERNA, PISTOLA }
 
-# --- Ajustes de la linterna (bájalos o súbelos a gusto) ---
+# --- Ajustes de la linterna ---
 const LINTERNA_ENERGIA: float = 1.8
 const LINTERNA_ALCANCE: float = 14.0
 const LINTERNA_ANGULO: float = 30.0
-const LINTERNA_CON_PISTOLA: float = 0.4   # fracción de luz cuando llevas la pistola en la mano
+const LINTERNA_CON_PISTOLA: float = 0.4    # fracción de luz cuando llevas la pistola en la mano
 
 # --- Ajustes de los perks ---
 const BALAS_POR_PISTOLA: int = 6
 const CADENCIA: float = 0.45               # segundos entre disparos
 const RADAR_DURACION: float = 20.0         # segundos de radar por perk
+
+# --- Persecución (solo en el modo U R D4MN3D) ---
+const RADIO_CERCANIA: float = 16.0         # metros: a esta distancia empiezan los efectos
+const RADIO_LINTERNA_OFF: float = 6.0      # metros: la linterna se apaga
+const HISTERESIS_LINTERNA: float = 2.0     # debes alejarte 2 m más para que se prenda otra vez
+const VENTANA_HUIDA: float = 10.0          # segundos de huida tras gastar el escudo
+# Volumen (dB) de los bucles según la cercanía: de lejos (min) a encima del enemigo (max).
+const VOL_RESPIRACION_MIN: float = -20.0
+const VOL_RESPIRACION_MAX: float = 9.0     # la respiración domina
+const VOL_SUSURROS_MIN: float = -4.0      # MIN = MAX: volumen alto y constante
+const VOL_SUSURROS_MAX: float = -4.0
+const DEBUG_TECLA_ATAQUE: bool = true      # H simula un golpe del enemigo (quítalo cuando exista el enemigo)
+
+# --- Pasos ---
+const PASOS_POR_PASO: bool = false         # false = un audio continuo mientras caminas; true = un audio por paso
+const DIST_PASO: float = 2.2               # metros entre pasos (solo si PASOS_POR_PASO es true)
 
 @export var velocidad: float = 5.0
 @export var sensibilidad: float = 0.0025
@@ -43,9 +63,24 @@ var radar_activo: bool = false
 var radar_energia: float = 0.0
 var tiene_escudo: bool = false
 
+# Persecución: los asigna mapa_3d.gd.
+var enemigo: Node3D
+var efectos_cercania: bool = false
+var cercania: float = 0.0              # 0 = lejos, 1 = encima del enemigo (suavizado)
+var distancia_enemigo: float = INF
+var linterna_apagada: bool = false
+var en_ventana_huida: bool = false     # el enemigo puede consultarlo (p. ej. para quedarse quieto)
+var tiempo_huida: float = 0.0
+
 var _pitch: float = 0.0
 var _enfriamiento: float = 0.0
 var _flash: OmniLight3D
+var _dist_paso: float = 0.0
+var _snd_respiracion: AudioStreamPlayer
+var _snd_susurros: AudioStreamPlayer
+var _snd_reloj: AudioStreamPlayer
+var _snd_paso_caminar: AudioStreamPlayer
+var _snd_paso_correr: AudioStreamPlayer
 
 
 func _ready() -> void:
@@ -71,11 +106,19 @@ func _ready() -> void:
 	camara.add_child(linterna)
 	_actualizar_linterna()
 
-	_flash = OmniLight3D.new()   # destello del disparo
+	_flash = OmniLight3D.new()    # destello del disparo
 	_flash.light_color = Color(1.0, 0.8, 0.4)
 	_flash.omni_range = 8.0
 	_flash.light_energy = 0.0
 	camara.add_child(_flash)
+
+	# Bucles de audio (null si todavía no pusiste el archivo en Music/Sfx).
+	_snd_respiracion = Sonidos.crear_bucle(self, "respiracion", -40.0)
+	_snd_susurros = Sonidos.crear_bucle(self, "susurros", -40.0)
+	_snd_reloj = Sonidos.crear_bucle(self, "reloj", 0.0)
+	if not PASOS_POR_PASO:
+		_snd_paso_caminar = Sonidos.crear_bucle(self, "paso_caminar", -6.0)
+		_snd_paso_correr = Sonidos.crear_bucle(self, "paso_correr", -3.0)
 
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -90,6 +133,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			disparar()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			alternar_arma()
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_1:
@@ -98,6 +143,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				equipar(Arma.PISTOLA)
 			KEY_R:
 				alternar_radar()
+			KEY_H:
+				if DEBUG_TECLA_ATAQUE:
+					print("[DEBUG] golpe simulado -> letal: ", recibir_ataque())
 			KEY_ESCAPE:
 				Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -116,10 +164,13 @@ func _physics_process(delta: float) -> void:
 	velocity.y = 0.0 if is_on_floor() else velocity.y - gravedad * delta
 	move_and_slide()
 
+	_sonido_pasos(delta)
+	_actualizar_persecucion(delta)
+
 	_enfriamiento = maxf(0.0, _enfriamiento - delta)
 	if radar_activo:
 		radar_energia -= delta
-		if radar_energia <= 0.0:   # se agota la batería: se pierde el perk
+		if radar_energia <= 0.0:    # se agota la batería: se pierde el perk
 			radar_energia = 0.0
 			radar_activo = false
 			tiene_radar = false
@@ -128,9 +179,121 @@ func _physics_process(delta: float) -> void:
 	if c != celda_actual:
 		celda_actual = c
 		celda_cambiada.emit(c)
+		
+		# --- NOTIFICAR AL AUTÓMATA DEL ENEMIGO ---
+		# Busca el nodo del enemigo en la escena (ajusta la ruta si es necesario)
+		var enemigo = get_node_or_null("../EnemigoPerseguidor")
+		if enemigo and enemigo.has_method("registrar_movimiento_jugador"):
+			enemigo.registrar_movimiento_jugador()
 
 
-# ---------- Perks ----------
+# ---------- Persecución: cercanía, respiración, linterna y ventana de huida ----------
+
+func _actualizar_persecucion(delta: float) -> void:
+	var d: float = INF
+	if efectos_cercania and enemigo != null and is_instance_valid(enemigo):
+		d = Vector2(global_position.x - enemigo.global_position.x,
+			global_position.z - enemigo.global_position.z).length()
+	distancia_enemigo = d
+	var objetivo: float = clampf(1.0 - d / RADIO_CERCANIA, 0.0, 1.0)
+	cercania = lerpf(cercania, objetivo, 1.0 - exp(-6.0 * delta))
+
+	# La linterna se apaga al acercarse el enemigo y vuelve (con su sonido) al alejarte.
+	if not linterna_apagada and d < RADIO_LINTERNA_OFF:
+		_poner_linterna(false)
+	elif linterna_apagada and d > RADIO_LINTERNA_OFF + HISTERESIS_LINTERNA:
+		_poner_linterna(true)
+
+	# Respiración y susurros suenan a la vez y suben de volumen mientras más cerca está el enemigo.
+	var cerca: bool = cercania > 0.03 and not en_ventana_huida
+	_bucle_cercania(_snd_respiracion, cerca, VOL_RESPIRACION_MIN, VOL_RESPIRACION_MAX)
+	_bucle_cercania(_snd_susurros, cerca, VOL_SUSURROS_MIN, VOL_SUSURROS_MAX)
+
+	if en_ventana_huida:
+		tiempo_huida -= delta
+		if tiempo_huida <= 0.0:
+			_terminar_ventana_huida()
+
+
+func _bucle_cercania(p: AudioStreamPlayer, activo: bool, db_min: float, db_max: float) -> void:
+	if p == null:
+		return
+	if activo:
+		p.volume_db = lerpf(db_min, db_max, cercania)
+		if not p.playing:
+			p.play()
+	elif p.playing:
+		p.stop()
+
+
+func _poner_linterna(encendida: bool) -> void:
+	linterna_apagada = not encendida
+	_actualizar_linterna()
+	Sonidos.reproducir(self, "linterna_encender" if encendida else "linterna_apagar", -3.0)
+	linterna_cambiada.emit(encendida)
+
+
+func _iniciar_ventana_huida() -> void:
+	en_ventana_huida = true
+	tiempo_huida = VENTANA_HUIDA
+	if _snd_reloj != null:
+		_snd_reloj.play()
+	ventana_huida_iniciada.emit()
+
+
+func _terminar_ventana_huida() -> void:
+	en_ventana_huida = false
+	tiempo_huida = 0.0
+	if _snd_reloj != null:
+		_snd_reloj.stop()
+	ventana_huida_terminada.emit()
+
+
+# El enemigo llama a esto al alcanzarte. Devuelve true si el ataque es LETAL.
+# - Durante la ventana de huida eres invulnerable.
+# - Con escudo: se gasta, empieza la ventana de huida de 10 s y sobrevives.
+func recibir_ataque() -> bool:
+	if en_ventana_huida:
+		return false
+	if tiene_escudo:
+		tiene_escudo = false
+		Sonidos.reproducir(self, "escudo_roto")
+		Sonidos.reproducir(self, "implosion")   # justo al inicio del golpe, antes de que empiece el reloj
+		escudo_roto.emit()
+		_iniciar_ventana_huida()
+		return false
+	return true
+
+
+# ---------- Pasos ----------
+
+func _sonido_pasos(delta: float) -> void:
+	var rapidez: float = Vector2(velocity.x, velocity.z).length()
+	var moviendo: bool = is_on_floor() and rapidez > 0.5
+	var corriendo: bool = Input.is_physical_key_pressed(KEY_SHIFT)
+	if PASOS_POR_PASO:
+		if not moviendo:
+			_dist_paso = DIST_PASO * 0.6   # al empezar a caminar suena un paso enseguida
+			return
+		_dist_paso += rapidez * delta
+		if _dist_paso >= DIST_PASO:
+			_dist_paso = 0.0
+			Sonidos.reproducir(self, "paso_correr" if corriendo else "paso_caminar", -4.0)
+	else:
+		_bucle_paso(_snd_paso_caminar, moviendo and not corriendo)
+		_bucle_paso(_snd_paso_correr, moviendo and corriendo)
+
+
+func _bucle_paso(p: AudioStreamPlayer, debe_sonar: bool) -> void:
+	if p == null:
+		return
+	if debe_sonar and not p.playing:
+		p.play()
+	elif not debe_sonar and p.playing:
+		p.stop()
+
+
+# ---------- Perks y armas ----------
 
 func recoger_perk(tipo: int) -> void:
 	if tipo == Perks.Tipo.PISTOLA:
@@ -143,6 +306,7 @@ func recoger_perk(tipo: int) -> void:
 		radar_activo = true
 	elif tipo == Perks.Tipo.ESCUDO:
 		tiene_escudo = true
+	Sonidos.reproducir(self, "recoger_item", -2.0)
 	perk_recogido.emit(tipo)
 
 
@@ -156,6 +320,11 @@ func equipar(a: int) -> void:
 	arma_cambiada.emit(a)
 
 
+# Rueda del mouse: pasa de la linterna a la pistola y viceversa (si ya tienes la pistola).
+func alternar_arma() -> void:
+	equipar(Arma.PISTOLA if arma_actual == Arma.LINTERNA else Arma.LINTERNA)
+
+
 func alternar_radar() -> void:
 	if tiene_radar:
 		radar_activo = not radar_activo
@@ -166,6 +335,7 @@ func disparar() -> void:
 		return
 	balas -= 1
 	_enfriamiento = CADENCIA
+	Sonidos.reproducir(self, "disparo", 0.0, 0.05)
 	disparo_realizado.emit()
 	_destello()
 	var origen: Vector3 = camara.global_position
@@ -174,19 +344,13 @@ func disparar() -> void:
 	var consulta := PhysicsRayQueryParameters3D.create(origen, destino, 1, excluir)
 	var impacto: Dictionary = get_world_3d().direct_space_state.intersect_ray(consulta)
 	if not impacto.is_empty() and impacto["collider"].has_method("recibir_disparo"):
-		impacto["collider"].recibir_disparo()   # el enemigo implementará este método
-
-
-# El enemigo llama a esto al alcanzarte. Devuelve true si el ataque es letal.
-func recibir_ataque() -> bool:
-	if tiene_escudo:
-		tiene_escudo = false
-		escudo_roto.emit()
-		return false
-	return true
+		impacto["collider"].recibir_disparo()    # el enemigo implementará este método
 
 
 func _actualizar_linterna() -> void:
+	if linterna_apagada:
+		linterna.light_energy = 0.0
+		return
 	var f: float = 1.0 if arma_actual == Arma.LINTERNA else LINTERNA_CON_PISTOLA
 	linterna.light_energy = LINTERNA_ENERGIA * f
 

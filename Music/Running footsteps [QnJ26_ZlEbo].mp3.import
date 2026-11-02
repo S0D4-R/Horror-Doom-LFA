@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://c77y5i5ernm5g"
+path="res://.godot/imported/Running footsteps [QnJ26_ZlEbo].mp3-aaa8a5266cc3dd2fbe8a86347c2b6ce3.mp3str"
+
+[deps]
+
+source_file="res://Music/Running footsteps [QnJ26_ZlEbo].mp3"
+dest_files=["res://.godot/imported/Running footsteps [QnJ26_ZlEbo].mp3-aaa8a5266cc3dd2fbe8a86347c2b6ce3.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

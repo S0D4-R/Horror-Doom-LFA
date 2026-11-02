@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://ctkjj36npkvj2"
+path="res://.godot/imported/Gun - sound effect - for edit [a04eJ8lDlfE].mp3-550ff8e512766e1aa17b3f277cf6158b.mp3str"
+
+[deps]
+
+source_file="res://Music/Gun - sound effect - for edit [a04eJ8lDlfE].mp3"
+dest_files=["res://.godot/imported/Gun - sound effect - for edit [a04eJ8lDlfE].mp3-550ff8e512766e1aa17b3f277cf6158b.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4
