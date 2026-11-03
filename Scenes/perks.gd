@@ -31,7 +31,7 @@ static func color(t: int) -> Color:
 # anterior (cajas de colores y texto), así que puedes ir agregándolos uno por uno.
 const CARPETA_ICONOS: String = "res://Assets/Icons/"
 const ICONOS: Dictionary = {
-	Tipo.PISTOLA: "perk_pistola",
+	Tipo.PISTOLA: "SINGLE_P",
 	Tipo.RADAR: "perk_radar",
 	Tipo.ESCUDO: "perk_escudo",
 }

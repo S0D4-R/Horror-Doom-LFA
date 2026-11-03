@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://cx4hgyyauonih"
+path="res://.godot/imported/.Goëtia. ｜ Dark Magic Music [_iF7lkXKHlA].mp3-67bf1fdc9a5a00e4b58ed322e0c50a4b.mp3str"
+
+[deps]
+
+source_file="res://Music/.Goëtia. ｜ Dark Magic Music [_iF7lkXKHlA].mp3"
+dest_files=["res://.godot/imported/.Goëtia. ｜ Dark Magic Music [_iF7lkXKHlA].mp3-67bf1fdc9a5a00e4b58ed322e0c50a4b.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4
