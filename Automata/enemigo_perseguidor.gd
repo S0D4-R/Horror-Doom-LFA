@@ -1,68 +1,198 @@
 class_name EnemigoPerseguidor
 extends Abaddon
-# ─── Módulo de movimiento por pasos ───────────────────────────────────────────
-# Hereda TODO lo de Abaddon (Dijkstra, aturdimiento, sprite, audio, luz…).
-# Añade el autómata de estados que mueve a Abaddon UNA celda cada 2 pasos
-# del jugador y solo cuando está dentro del radio de activación.
+# ─── Autómata del perseguidor ─────────────────────────────────────────────────
+# Máquina de estados finita (con contador de pasos) que gobierna a Abaddon
+# usando el grafo de Grafo.gd (celdas de piso = nodos, vecinos 4-dir = aristas).
 #
-# Compatibilidad con mapa_3d.gd
-# ─────────────────────────────
-# mapa_3d ya declara:  var enemigo_nodo: Perseguidor
-# Como EnemigoPerseguidor extiende Abaddon (que a su vez extiende CharacterBody3D)
-# y Perseguidor fue renombrado a Abaddon, la variable de mapa_3d debe cambiar a:
-#     var enemigo_nodo: Abaddon
-# Así desaparece el error "Expression is of type 'Perseguidor' so it can't be
-# of type 'MeshInstance3D'" que surgía porque _congelar_enemigo comparaba con
-# MeshInstance3D en lugar de llamar a congelar(). Ahora Abaddon sí implementa
-# congelar(), así que mapa_3d entra por la rama correcta.
+# Q (estados)  : IDLE, ESPERANDO, PERSIGUIENDO, ATURDIDO, CONGELADO
+# Σ (eventos)  : JUGADOR_CERCA, JUGADOR_LEJOS, DISPARO, RECUPERADO, CONGELAR, DESCONGELAR
+# δ (TRANSICIONES) : tabla (estado, evento) -> estado.  Si el par no está, el estado no cambia.
+# q0           : IDLE
+#
+# Salida (tipo Mealy): al transicionar a PERSIGUIENDO por JUGADOR_CERCA, el enemigo
+# avanza UNA celda por la ruta Dijkstra (Grafo.dijkstra) hacia el jugador.
+#
+# Cómo se mide "cerca": en NODOS DEL GRAFO (largo de la ruta Dijkstra), no en línea recta.
+# Así un muro entre ambos cuenta como lejos aunque estén pegados en el plano.
+#
+# Cableado (lo hace mapa_3d.gd): jugador.celda_cambiada -> registrar_movimiento_jugador()
 
-# Definición de estados del autómata
-enum Estado { IDLE, ESPERANDO, PERSIGUIENDO }
+enum Estado { IDLE, ESPERANDO, PERSIGUIENDO, ATURDIDO, CONGELADO }
+enum Evento { JUGADOR_CERCA, JUGADOR_LEJOS, DISPARO, RECUPERADO, CONGELAR, DESCONGELAR }
+
+signal estado_cambiado(anterior: int, nuevo: int)
+
+# Función de transición δ. JUGADOR_CERCA no está aquí porque lleva guarda (contador de pasos),
+# se resuelve en _siguiente_estado().
+const TRANSICIONES: Dictionary = {
+	Estado.IDLE: {
+		Evento.DISPARO: Estado.ATURDIDO,
+		Evento.CONGELAR: Estado.CONGELADO,
+	},
+	Estado.ESPERANDO: {
+		Evento.JUGADOR_LEJOS: Estado.IDLE,
+		Evento.DISPARO: Estado.ATURDIDO,
+		Evento.CONGELAR: Estado.CONGELADO,
+	},
+	Estado.PERSIGUIENDO: {
+		Evento.JUGADOR_LEJOS: Estado.IDLE,
+		Evento.DISPARO: Estado.ATURDIDO,
+		Evento.CONGELAR: Estado.CONGELADO,
+	},
+	Estado.ATURDIDO: {
+		Evento.RECUPERADO: Estado.IDLE,
+		Evento.CONGELAR: Estado.CONGELADO,
+	},
+	Estado.CONGELADO: {
+		Evento.DESCONGELAR: Estado.IDLE,   # si sigue aturdido se corrige en _siguiente_estado()
+	},
+}
+
+# Radio de activación medido en celdas del grafo (5 celdas ≈ 10 m con tam_celda = 2).
+@export var radio_activacion_celdas: int = 999
+# Cuántos pasos del jugador (cambios de celda) hacen falta para que avance una celda.
+@export var pasos_por_movimiento: int = 2
+# true  = dentro del radio persigue sin pausa con el Dijkstra de Abaddon (estilo U R D4MN3D).
+# false = avanza solo de a una celda cada [pasos_por_movimiento] pasos del jugador.
+@export var persecucion_continua: bool = true
+@export var depurar: bool = true
+
 var estado_actual: Estado = Estado.IDLE
-
-@export var distancia_activacion: float = 10.0  # radio mínimo para que despierte
-
 var contador_pasos_jugador: int = 0
+
+var _celda_objetivo: Vector2i = Vector2i.ZERO
+var _tiene_objetivo: bool = false
 
 
 func _ready() -> void:
-	# Inicializar todo lo de Abaddon (colisión, sprite/malla, luz, audio)
 	super._ready()
-	# El jugador se asignará desde mapa_3d igual que antes.
-	# Si quieres buscar automáticamente (útil en pruebas):
-	#   jugador = get_node_or_null("../Jugador")
+	recuperado.connect(_on_recuperado)
 
 
-# ── Autómata de pasos ────────────────────────────────────────────────────────
-# Esta función es llamada desde el script del Jugador cada vez que cambia de celda.
-func registrar_movimiento_jugador() -> void:
-	if not jugador:
+# ── Entrada de eventos ───────────────────────────────────────────────────────
+# Lo llama mapa_3d.gd cada vez que el jugador cambia de celda (señal celda_cambiada).
+func registrar_movimiento_jugador(_celda: Vector2i = Vector2i.ZERO) -> void:
+	if mapa == null or jugador == null:
 		return
-	if esta_congelado or esta_aturdido:
-		return   # no reacciona durante la ventana de huida ni mientras está aturdido
+	# Ruta enemigo -> jugador sobre el grafo. Se guarda en [ruta], que usa Abaddon.
+	ruta = Grafo.dijkstra(mapa.matriz, celda_actual(), jugador.celda_actual)
+	var cerca: bool = not ruta.is_empty() and (ruta.size() - 1) <= radio_activacion_celdas
+	_procesar(Evento.JUGADOR_CERCA if cerca else Evento.JUGADOR_LEJOS)
 
-	var distancia: float = global_position.distance_to(jugador.global_position)
 
-	if distancia <= distancia_activacion:
+func recibir_disparo() -> void:
+	super.recibir_disparo()
+	_procesar(Evento.DISPARO)
+
+
+func congelar(valor: bool) -> void:
+	super.congelar(valor)
+	_procesar(Evento.CONGELAR if valor else Evento.DESCONGELAR)
+
+
+func _on_recuperado() -> void:
+	_procesar(Evento.RECUPERADO)
+
+
+# ── Núcleo del autómata ──────────────────────────────────────────────────────
+func _procesar(evento: Evento) -> void:
+	var anterior: Estado = estado_actual
+	var siguiente: Estado = _siguiente_estado(evento)
+
+	estado_actual = siguiente
+	if siguiente != anterior:
+		_al_cambiar_de_estado(siguiente)
+		estado_cambiado.emit(anterior, siguiente)
+		if depurar:
+			print("Abaddon: %s --%s--> %s" % [Estado.keys()[anterior], Evento.keys()[evento], Estado.keys()[siguiente]])
+
+	# Salida de la transición: avanzar una celda.
+	if evento == Evento.JUGADOR_CERCA and siguiente == Estado.PERSIGUIENDO:
+		_dar_paso()
+
+
+func _siguiente_estado(evento: Evento) -> Estado:
+	if evento == Evento.JUGADOR_CERCA:
+		# En ATURDIDO / CONGELADO no reacciona.
+		if estado_actual == Estado.ATURDIDO or estado_actual == Estado.CONGELADO:
+			return estado_actual
 		contador_pasos_jugador += 1
-
-		if contador_pasos_jugador >= 2:
-			estado_actual = Estado.PERSIGUIENDO
-			_ejecutar_paso()
+		if contador_pasos_jugador >= _pasos_necesarios():
 			contador_pasos_jugador = 0
-		else:
-			estado_actual = Estado.ESPERANDO
-			print("Abaddon te observa en silencio… (%d/2)" % contador_pasos_jugador)
-	else:
-		estado_actual = Estado.IDLE
+			return Estado.PERSIGUIENDO
+		return Estado.ESPERANDO
+
+	var siguiente: Estado = TRANSICIONES.get(estado_actual, {}).get(evento, estado_actual)
+	# Al descongelar, si todavía está aturdido vuelve a ATURDIDO y no a IDLE.
+	if evento == Evento.DESCONGELAR and siguiente == Estado.IDLE and esta_aturdido:
+		siguiente = Estado.ATURDIDO
+	return siguiente
+
+
+func _pasos_necesarios() -> int:
+	return 1 if persecucion_continua else maxi(1, pasos_por_movimiento)
+
+
+# Acciones de entrada a un estado.
+func _al_cambiar_de_estado(nuevo: Estado) -> void:
+	if nuevo == Estado.IDLE or nuevo == Estado.ATURDIDO or nuevo == Estado.CONGELADO:
 		contador_pasos_jugador = 0
+		_tiene_objetivo = false
 
 
-# Avanza exactamente una celda en dirección al jugador.
-# Complementa (no reemplaza) el seguimiento continuo de Abaddon:
-# si el modo es U_R_D4MN3D, _physics_process ya mueve con Dijkstra;
-# este método sirve para el modo SUPERVIVENCIA o para testear el autómata solo.
-func _ejecutar_paso() -> void:
-	var direccion: Vector3 = (jugador.global_position - global_position).normalized()
-	global_position += direccion * mapa.tam_celda if mapa != null else direccion * 2.0
-	print("¡Abaddon avanza hacia ti!")
+# Fija como objetivo la siguiente celda de la ruta Dijkstra (ruta[0] es la celda actual).
+func _dar_paso() -> void:
+	if persecucion_continua or ruta.size() < 2:
+		return
+	_celda_objetivo = ruta[1]
+	_tiene_objetivo = true
+	if depurar:
+		print("¡Abaddon avanza a la celda %s!" % _celda_objetivo)
+
+
+# ── Movimiento (sobrescribe los ganchos de Abaddon, el resto se hereda) ─────
+# En modo por pasos Abaddon no recalcula la ruta solo: la fija el autómata en cada evento.
+func _recalcular_ruta() -> void:
+	if persecucion_continua and estado_actual == Estado.PERSIGUIENDO:
+		super._recalcular_ruta()
+
+
+func _seguir_ruta() -> void:
+	if persecucion_continua:
+		if estado_actual == Estado.PERSIGUIENDO:
+			super._seguir_ruta()
+		else:
+			_detener()
+		return
+
+	if not _tiene_objetivo:
+		_detener()
+		return
+
+	# Si el objetivo es la celda del jugador, va directo hacia él (igual que Abaddon).
+	var destino: Vector3 = mapa.celda_a_mundo(_celda_objetivo)
+	if _celda_objetivo == jugador.celda_actual:
+		destino = jugador.global_position
+	var dir: Vector3 = destino - global_position
+	dir.y = 0.0
+
+	var margen: float = velocidad_perseguir * get_physics_process_delta_time() * 1.5
+	if dir.length() <= margen:
+		_tiene_objetivo = false   # llegó al centro de la celda: espera el próximo paso
+		_detener()
+		return
+
+	dir = dir.normalized()
+	velocity.x = dir.x * velocidad_perseguir
+	velocity.z = dir.z * velocidad_perseguir
+	look_at(global_position + Vector3(dir.x, 0.0, dir.z), Vector3.UP)
+
+
+func _detener() -> void:
+	velocity.x = 0.0
+	velocity.z = 0.0
+
+
+func nombre_estado() -> String:
+	return Estado.keys()[estado_actual]
+
