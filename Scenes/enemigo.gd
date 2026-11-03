@@ -69,7 +69,7 @@ func _ready() -> void:
 	col.position.y = 0.9
 	add_child(col)
 
-	# ── Sprite 2D / representación visual ───────────────────────────────
+		# ── Sprite 2D / representación visual ───────────────────────────────
 	if sprite != null:
 		# Sprite asignado desde el Inspector: ajustar posición y escala.
 		sprite.position.y = 0.9
@@ -80,20 +80,35 @@ func _ready() -> void:
 			sprite.no_depth_test = false
 		# Cargar textura si no fue asignada en el Inspector
 		if sprite is Sprite3D and sprite.texture == null:
-			if ResourceLoader.exists("res://Assets/Chars/abaddon_sprite.png"):
-				sprite.texture = load("res://Assets/Chars/abaddon_sprite.png")
+			if ResourceLoader.exists("res://Assets/Chars/monster.png"):
+				sprite.texture = load("res://Assets/Chars/monster.png")
 	else:
-		# Malla cápsula PROVISIONAL mientras no hay sprite.
-		_malla_provisional = MeshInstance3D.new()
-		var forma := CapsuleMesh.new()
-		forma.radius = 0.4
-		forma.height = 1.8
-		_malla_provisional.mesh = forma
-		_malla_provisional.position.y = 0.9
-		_mat = StandardMaterial3D.new()
-		_mat.emission_enabled = true
-		_malla_provisional.material_override = _mat
-		add_child(_malla_provisional)
+		var ruta_tex: String = "res://Assets/Chars/monster.png"
+		var tex: Texture2D = load(ruta_tex) if ResourceLoader.exists(ruta_tex) else null
+		print("[Abaddon] png encontrado: ", tex != null, " | tamaño: ", tex.get_size() if tex != null else "—")
+		if tex != null:
+			var s3d := Sprite3D.new()
+			s3d.texture = tex
+			s3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			s3d.shaded = false
+			s3d.double_sided = true
+			s3d.pixel_size = sprite_escala.y / float(tex.get_height())
+			s3d.position.y = sprite_escala.y * 0.5
+			add_child(s3d)
+			sprite = s3d
+			print("[Abaddon] sprite creado | pixel_size: ", s3d.pixel_size, " | alto en metros: ", tex.get_height() * s3d.pixel_size)
+		else:
+			# Malla cápsula PROVISIONAL mientras no hay sprite.
+			_malla_provisional = MeshInstance3D.new()
+			var forma := CapsuleMesh.new()
+			forma.radius = 0.4
+			forma.height = 1.8
+			_malla_provisional.mesh = forma
+			_malla_provisional.position.y = 0.9
+			_mat = StandardMaterial3D.new()
+			_mat.emission_enabled = true
+			_malla_provisional.material_override = _mat
+			add_child(_malla_provisional)
 
 	# ── Luz ambiental ────────────────────────────────────────────────────
 	_luz = OmniLight3D.new()

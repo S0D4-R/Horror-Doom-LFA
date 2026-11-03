@@ -12,11 +12,15 @@ const ESCENA_JUEGO: String = "res://Scenes/map_palace.tscn"
 const MODOS: Array = [
 	{
 		"nombre": "U R D4MN3D",
-		"desc": "Un solo enemigo te persigue sin descanso. Cuanto más cerca está, más se enrojece el mundo, más fuerte respiras y antes se apaga tu linterna. Escapa antes de que te alcance.",
+		"desc": "Unus hostis te sine requie persequitur. Quo propior est, eo magis mundus rubescit, eo fortius spiras atque citius lanterna tua exstinguitur. Fuge priusquam te adsequatur.",
 	},
 	{
 		"nombre": "SUPERVIVENCIA",
-		"desc": "No hay salida. Aguanta el mayor tiempo posible mientras los perks te ayudan a seguir con vida.",
+		"desc": "Nullus est exitus. Quam diutissime perfer, dum commoda te vivum manere iuvant.",
+	},
+	{
+		"nombre": "Dijkstra",
+		"desc": "Respice post aulaeum, aspectus haud multum tibi nocebit...",
 	},
 ]
 
