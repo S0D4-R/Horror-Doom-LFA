@@ -5,7 +5,7 @@ extends RefCounted
 
 enum Modo { U_R_D4MN3D, SUPERVIVENCIA }   # el orden debe coincidir con MODOS
 
-const ESCENA_MENU: String = "res://Scenes/menu.tscn"
+const ESCENA_MENU: String = "res://Scenes/main_menu_interactive.tscn"
 const ESCENA_JUEGO: String = "res://Scenes/map_palace.tscn"
 
 # Reglas provisionales: se implementan en el juego según el modo elegido.

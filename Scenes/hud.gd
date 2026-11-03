@@ -88,9 +88,14 @@ var _gameover_alpha: float = 0.0
 # Menú de pausa
 var _menu_pausa: Control
 var _pausado: bool = false
+var _botones_pausa: Array[Button] = []
+var _silenciar_foco: bool = false   # true = el próximo cambio de foco no hace sonido
+var _saliendo: bool = false         # evita cambiar de escena dos veces
 
 
 func _ready() -> void:
+	# El HUD debe seguir recibiendo input con el juego en pausa; si no, el menú de pausa queda muerto.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_tex_linterna = load("res://Assets/Chars/LANTERN_recolor2.png")
 	_tex_pistola  = load("res://Assets/Chars/pistol_hand_recolor.png")
 	if ResourceLoader.exists("res://Assets/Chars/SHOOT_recolor.png"):
@@ -100,6 +105,7 @@ func _ready() -> void:
 
 	_raiz = Control.new()
 	_raiz.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_raiz.process_mode = Node.PROCESS_MODE_PAUSABLE   # el HUD de juego (radar, mano...) sí se congela al pausar
 	add_child(_raiz)
 	_raiz.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
@@ -388,17 +394,22 @@ func _crear_menu_pausa() -> void:
 	panel.add_child(col)
 
 	col.add_child(_etiqueta("PAUSADO", 48, Color(0.85, 0.06, 0.06)))
-	col.add_child(_boton_pausa("CONTINUAR", _reanudar))
-	col.add_child(_boton_pausa("REINICIAR", _reiniciar))
-	col.add_child(_boton_pausa("MENÚ PRINCIPAL", _ir_menu))
+	var defs: Array = [["CONTINUAR", _reanudar], ["REINICIAR", _reiniciar], ["MENÚ PRINCIPAL", _ir_menu]]
+	for d in defs:
+		var btn: Button = _boton_pausa(d[0], d[1], _botones_pausa.size())
+		_botones_pausa.append(btn)
+		col.add_child(btn)
 
 
-func _boton_pausa(texto: String, callback: Callable) -> Button:
+func _boton_pausa(texto: String, callback: Callable, indice: int) -> Button:
 	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_ALL
 	btn.text = texto
 	btn.add_theme_font_size_override("font_size", 22)
 	btn.add_theme_color_override("font_color", Color(0.9, 0.85, 0.8))
 	btn.add_theme_color_override("font_hover_color", Color(1.0, 0.4, 0.3))
+	btn.add_theme_color_override("font_focus_color", Color(1.0, 0.4, 0.3))
+	btn.add_theme_color_override("font_pressed_color", Color(1.0, 0.4, 0.3))
 	var estilo_normal := StyleBoxFlat.new()
 	estilo_normal.bg_color = Color(0.18, 0.12, 0.11)
 	estilo_normal.border_color = Color(0.4, 0.10, 0.09)
@@ -412,58 +423,111 @@ func _boton_pausa(texto: String, callback: Callable) -> Button:
 	btn.add_theme_stylebox_override("normal", estilo_normal)
 	btn.add_theme_stylebox_override("hover", estilo_hover)
 	btn.add_theme_stylebox_override("pressed", estilo_hover)
-	btn.pressed.connect(callback)
+	btn.add_theme_stylebox_override("focus", estilo_hover)   # el botón seleccionado (teclado o mouse) se ve resaltado
+	btn.mouse_entered.connect(_seleccionar_pausa.bind(indice))
+	btn.focus_entered.connect(_on_foco_pausa)
+	btn.pressed.connect(_on_boton_pausa.bind(callback))
 	return btn
+
+
+# El mouse pasa sobre un botón: recibe el foco (y con él suena "select").
+func _seleccionar_pausa(i: int) -> void:
+	if not _menu_pausa.visible or i < 0 or i >= _botones_pausa.size():
+		return
+	_botones_pausa[i].grab_focus()
+
+
+func _mover_seleccion_pausa(paso: int) -> void:
+	var actual: int = _botones_pausa.find(get_viewport().gui_get_focus_owner())
+	var nuevo: int = 0 if actual == -1 else posmod(actual + paso, _botones_pausa.size())
+	_botones_pausa[nuevo].grab_focus()
+
+
+func _on_foco_pausa() -> void:
+	if not _silenciar_foco:
+		Sonidos.reproducir(self, "ui_select")
+
+
+# Se reproduce sobre la raíz del árbol para que el sonido no se corte al cambiar de escena.
+func _on_boton_pausa(callback: Callable) -> void:
+	Sonidos.reproducir(get_tree().root, "ui_click")
+	callback.call()
 
 
 func _reanudar() -> void:
 	_pausado = false
 	_menu_pausa.visible = false
+	get_viewport().gui_release_focus()
 	get_tree().paused = false
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _reiniciar() -> void:
+	if _saliendo:
+		return
+	_saliendo = true
 	get_tree().paused = false
 	get_tree().reload_current_scene.call_deferred()
 
 
 func _ir_menu() -> void:
+	if _saliendo:
+		return
+	if not ResourceLoader.exists(Partida.ESCENA_MENU):
+		push_error("HUD: no existe la escena del menú '%s'. Corrige Partida.ESCENA_MENU en partida.gd." % Partida.ESCENA_MENU)
+		return
+	_saliendo = true
 	get_tree().paused = false
-	get_tree().change_scene_to_file(Partida.ESCENA_MENU)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	var err: Error = get_tree().change_scene_to_file(Partida.ESCENA_MENU)
+	if err != OK:
+		push_error("HUD: no se pudo cargar el menú (error %d)." % err)
+		_saliendo = false
 
 
 func _abrir_pausa() -> void:
-	if _gameover_visible:
+	if _gameover_visible or (jugador != null and jugador.esta_muerto):
 		return
 	_pausado = true
 	_menu_pausa.visible = true
 	get_tree().paused = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	_silenciar_foco = true            # al abrir, CONTINUAR queda seleccionado sin sonido
+	_botones_pausa[0].grab_focus()
+	_silenciar_foco = false
 
 
-# ---------- Lógica de pausa con ESC ----------
+# ---------- Teclas: pausa (ESC), navegación del menú de pausa, y R / M tras morir ----------
+# Usa _input (no _unhandled_input) para que llegue siempre, también con el juego en pausa.
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.physical_keycode == KEY_ESCAPE:
-			if _gameover_visible:
-				return
-			if _pausado:
-				_reanudar()
-			else:
-				_abrir_pausa()
-		elif _gameover_visible:
-			if event.physical_keycode == KEY_R:
-				_reiniciar()
-			elif event.physical_keycode == KEY_M:
-				_ir_menu()
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	var tecla: int = event.physical_keycode
+	if _pausado:
+		if tecla == KEY_ESCAPE:
+			_reanudar()
+		elif tecla == KEY_UP or tecla == KEY_W:
+			_mover_seleccion_pausa(-1)
+		elif tecla == KEY_DOWN or tecla == KEY_S:
+			_mover_seleccion_pausa(1)
+		else:
+			return   # Enter / Espacio los gestiona el propio botón enfocado
+		get_viewport().set_input_as_handled()
+		return
+	if tecla == KEY_ESCAPE:
+		_abrir_pausa()
+	elif jugador != null and (jugador.esta_muerto or _gameover_visible):
+		if tecla == KEY_R:
+			_reiniciar()
+		elif tecla == KEY_M:
+			_ir_menu()
 
 
 # ---------- Actualización por frame ----------
 
 func _process(delta: float) -> void:
-	if jugador == null:
+	if jugador == null or _pausado:
 		return
 	if _gameover_visible:
 		# Fade-in de la pantalla de game-over
