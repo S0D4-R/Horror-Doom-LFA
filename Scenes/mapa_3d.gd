@@ -34,7 +34,7 @@ var salida: Vector2i
 var enemigo: Vector2i
 var jugador_nodo: Jugador
 var modo: int = Partida.Modo.U_R_D4MN3D
-var enemigo_nodo: Abaddon
+var enemigo_nodo: EnemigoPerseguidor
 var hud: HUD
 var _env: Environment
 var posiciones_perks: Dictionary = {}
@@ -279,6 +279,8 @@ func _agregar_jugador() -> void:
 	jugador_nodo.ventana_huida_terminada.connect(_congelar_enemigo.bind(false))
 	# Detectar cuando el jugador llega a la salida
 	jugador_nodo.celda_cambiada.connect(_on_celda_cambiada)
+	# El autómata del enemigo reacciona a cada paso (cambio de celda) del jugador
+	jugador_nodo.celda_cambiada.connect(enemigo_nodo.registrar_movimiento_jugador)
 	hud = HUD.new()
 	add_child(hud)
 	hud.conectar(jugador_nodo, enemigo_nodo)
