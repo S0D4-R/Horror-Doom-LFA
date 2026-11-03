@@ -224,9 +224,6 @@ func _physics_process(delta: float) -> void:
 	if c != celda_actual:
 		celda_actual = c
 		celda_cambiada.emit(c)
-		var enemigo_nodo = get_node_or_null("../EnemigoPerseguidor")
-		if enemigo_nodo and enemigo_nodo.has_method("registrar_movimiento_jugador"):
-			enemigo_nodo.registrar_movimiento_jugador()
 
 
 # ---------- Muerte: la cámara cae al suelo → GAME OVER (sin respawn) ----------
