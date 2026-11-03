@@ -23,8 +23,9 @@ const ARCHIVOS: Dictionary = {
 	"susurros": "whispers",                                               # cerca del enemigo, a la vez que la respiración
 	"reloj": "ticking",                                                   # durante los 10 s de huida tras gastar el escudo
 	# ---- Menú ----
-	"ui_click": "select",                                                 # al pulsar cualquier botón del menú
-	"ui_comenzar": "accept",                                              # especial: al pulsar COMENZAR, el último botón antes de jugar
+	"ui_select": "select",                                                # al moverte entre botones (teclado o mouse), en el menú principal y en el de pausa
+	"ui_click": "accept",                                                 # al aceptar / hacer clic en cualquier botón
+	"ui_comenzar": "accept",                                              # al pulsar COMENZAR (se reproduce sobre la raíz para que no se corte al cargar el juego)
 }
 
 static var _cache: Dictionary = {}
@@ -63,6 +64,7 @@ static func reproducir(padre: Node, nombre: String, volumen_db: float = 0.0, var
 	p.volume_db = volumen_db
 	p.pitch_scale = 1.0 + randf_range(-variacion_tono, variacion_tono)
 	p.bus = _bus()
+	p.process_mode = Node.PROCESS_MODE_ALWAYS   # que también suene con el juego en pausa (menú de pausa)
 	padre.add_child(p)
 	p.finished.connect(p.queue_free)
 	p.play()

@@ -433,11 +433,7 @@ func _on_jugador_atrapado() -> void:
 	# No recargar escena: la señal jugador_muerto ya activó el game-over en el HUD.
 
 
-# ESC lo maneja ahora el HUD. M sigue funcionando como atajo rápido al menú.
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.physical_keycode == KEY_M and jugador_nodo != null and jugador_nodo.esta_muerto:
-			get_tree().change_scene_to_file(Partida.ESCENA_MENU)
+# ESC, R y M (pausa, reintentar y volver al menú tras morir) los maneja el HUD.
 
 
 const NIEBLA_BASE: float = 0.08

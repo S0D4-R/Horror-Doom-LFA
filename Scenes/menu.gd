@@ -400,7 +400,7 @@ func _reconstruir_ui() -> void:
 		retraso += 0.08
 
 	if not _opciones.is_empty():
-		_seleccionar(_def.get("inicio", 0))
+		_seleccionar(_def.get("inicio", 0), false)   # selección inicial: sin sonido
 
 
 # Aparece parpadeando, como una luz defectuosa.
@@ -412,10 +412,14 @@ func _entrada(c: Control, retraso: float) -> void:
 	tw.tween_property(c, "modulate:a", 1.0, 0.12)
 
 
-func _seleccionar(i: int) -> void:
+func _seleccionar(i: int, sonar: bool = true) -> void:
 	if _opciones.is_empty():
 		return
-	_sel = clampi(i, 0, _opciones.size() - 1)
+	var nueva: int = clampi(i, 0, _opciones.size() - 1)
+	var cambio: bool = not _opciones[nueva].seleccionada   # solo suena si realmente cambia la opción
+	if sonar and cambio and not _bloqueado:
+		Sonidos.reproducir(self, "ui_select")
+	_sel = nueva
 	for k in _opciones.size():
 		_opciones[k].seleccionada = (k == _sel)
 	_actualizar_info()
