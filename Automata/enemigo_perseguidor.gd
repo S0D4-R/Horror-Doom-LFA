@@ -49,7 +49,7 @@ const TRANSICIONES: Dictionary = {
 }
 
 # Radio de activación medido en celdas del grafo (5 celdas ≈ 10 m con tam_celda = 2).
-@export var radio_activacion_celdas: int = 5
+@export var radio_activacion_celdas: int = 30
 # Cuántos pasos del jugador (cambios de celda) hacen falta para que avance una celda.
 @export var pasos_por_movimiento: int = 2
 # true  = dentro del radio persigue sin pausa con el Dijkstra de Abaddon (estilo U R D4MN3D).
