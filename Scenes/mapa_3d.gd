@@ -284,6 +284,10 @@ func _agregar_jugador() -> void:
 	hud = HUD.new()
 	add_child(hud)
 	hud.conectar(jugador_nodo, enemigo_nodo)
+	# Mapa de pasos del autómata y del jugador (tecla K, no pausa el juego)
+	var mapa_pasos := MapaPasos.new()
+	add_child(mapa_pasos)
+	mapa_pasos.conectar(self, jugador_nodo, enemigo_nodo)
 
 
 func _on_celda_cambiada(celda: Vector2i) -> void:
