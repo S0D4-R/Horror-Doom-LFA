@@ -435,7 +435,105 @@ func _on_jugador_atrapado() -> void:
 	# No recargar escena: la señal jugador_muerto ya activó el game-over en el HUD.
 
 
+# ── Easter eggs ──────────────────────────────────────────────────────────────
+#
+# Código Konami  →  W W S S A D A D  clic-izq  clic-der
+#   Efecto: teletransporta al jugador a la salida (fin del mapa).
+#
+# Código Lluvia  →  A D  clic-der  clic-der
+#   Efecto: spawnea todos los ítems faltantes junto al jugador.
+
+# Cada entrada se codifica como un carácter: W=U  S=D  A=L  D=R  clic-izq=A  clic-der=B
+const _EE_KONAMI: String = "UUDDLRLRAB"
+const _EE_LLUVIA: String = "LRBB"
+
+var _ee_buffer: String = ""   # historial de las últimas entradas (máx longitud del código más largo)
+const _EE_MAX: int = 10       # = len(_EE_KONAMI)
+
+
+func _ee_registrar(c: String) -> void:
+	_ee_buffer += c
+	if _ee_buffer.length() > _EE_MAX:
+		_ee_buffer = _ee_buffer.right(_EE_MAX)
+	if _ee_buffer.ends_with(_EE_KONAMI):
+		_ee_buffer = ""
+		_activar_konami()
+	elif _ee_buffer.ends_with(_EE_LLUVIA):
+		_ee_buffer = ""
+		_activar_lluvia()
+
+
+func _activar_konami() -> void:
+	if jugador_nodo == null or jugador_nodo.esta_muerto:
+		return
+	print("[EasterEgg] Konami activado → teletransporte a la salida")
+	# Congelar al enemigo un momento para que no mate al jugador mientras aparece en la salida
+	_congelar_enemigo(true)
+	jugador_nodo.global_position = celda_a_mundo(salida) + Vector3(0.0, 0.1, 0.0)
+	jugador_nodo.celda_actual = salida
+	# Flash visual de confirmación a través del HUD
+	if hud != null and hud.has_method("_mostrar"):
+		hud._mostrar("✦ WARP ✦")
+	Sonidos.reproducir(jugador_nodo, "ui_comenzar")
+	# Tras medio segundo descongelar y dejar que el jugador toque la celda de salida normalmente
+	await get_tree().create_timer(0.5).timeout
+	_congelar_enemigo(false)
+	# Activar la condición de victoria manualmente
+	_on_celda_cambiada(salida)
+
+
+func _activar_lluvia() -> void:
+	if jugador_nodo == null or jugador_nodo.esta_muerto:
+		return
+	print("[EasterEgg] Lluvia de ítems activada")
+	var c_jugador: Vector2i = jugador_nodo.celda_actual
+	# Spawnear todos los tipos que no estén ya en el mapa, justo al lado del jugador
+	# Celdas adyacentes al jugador en espiral (cerca primero)
+	var adyacentes: Array[Vector2i] = [
+		Vector2i(0, 0),
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1),
+		Vector2i(2, 0), Vector2i(-2, 0), Vector2i(0, 2), Vector2i(0, -2),
+	]
+	var ocupadas_spawn: Array[Vector2i] = []
+	for v in posiciones_perks.values():
+		ocupadas_spawn.append(v)
+	for tipo in Perks.todos():
+		if _perks_en_mapa.has(tipo):
+			continue
+		var celda_spawn: Vector2i = c_jugador
+		for off in adyacentes:
+			var candidata: Vector2i = c_jugador + off
+			if candidata.y >= 0 and candidata.y < matriz.size() \
+					and candidata.x >= 0 and candidata.x < matriz[candidata.y].size() \
+					and matriz[candidata.y][candidata.x] == 0 \
+					and not ocupadas_spawn.has(candidata):
+				celda_spawn = candidata
+				ocupadas_spawn.append(celda_spawn)
+				break
+		_crear_perk(tipo, celda_spawn)
+	if hud != null and hud.has_method("_mostrar"):
+		hud._mostrar("✦ ITEMS ✦")
+	Sonidos.reproducir(jugador_nodo, "recoger_item")
+
+
 # ESC, R y M (pausa, reintentar y volver al menú tras morir) los maneja el HUD.
+
+# _input (no _unhandled_input) para recibir las teclas antes de que jugador.gd las consuma.
+func _input(event: InputEvent) -> void:
+	if jugador_nodo != null and jugador_nodo.esta_muerto:
+		return
+	# Solo el primer frame de la pulsación (pressed=true, echo=false)
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.physical_keycode:
+			KEY_W: _ee_registrar("U")
+			KEY_S: _ee_registrar("D")
+			KEY_A: _ee_registrar("L")
+			KEY_D: _ee_registrar("R")
+	elif event is InputEventMouseButton and event.pressed:
+		match event.button_index:
+			MOUSE_BUTTON_LEFT:  _ee_registrar("A")
+			MOUSE_BUTTON_RIGHT: _ee_registrar("B")
 
 
 const NIEBLA_BASE: float = 0.08

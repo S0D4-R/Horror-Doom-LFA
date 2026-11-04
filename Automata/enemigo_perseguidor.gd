@@ -195,4 +195,3 @@ func _detener() -> void:
 
 func nombre_estado() -> String:
 	return Estado.keys()[estado_actual]
-
