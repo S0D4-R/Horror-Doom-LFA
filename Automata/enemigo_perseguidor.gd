@@ -19,9 +19,9 @@ extends Abaddon
  
 enum Estado { IDLE, ESPERANDO, PERSIGUIENDO, ATURDIDO, CONGELADO }
 enum Evento { JUGADOR_CERCA, JUGADOR_LEJOS, DISPARO, RECUPERADO, CONGELAR, DESCONGELAR }
- 
-signal estado_cambiado(anterior: int, nuevo: int)
- 
+
+signal estado_cambiado(anterior: int, nuevo: int, evento: int)
+
 # Función de transición δ. JUGADOR_CERCA no está aquí porque lleva guarda (contador de pasos),
 # se resuelve en _siguiente_estado().
 const TRANSICIONES: Dictionary = {
@@ -66,10 +66,11 @@ var contador_pasos_jugador: int = 0
  
 var _celda_objetivo: Vector2i = Vector2i.ZERO
 var _tiene_objetivo: bool = false
-var _t_ruta_visual: float = 0.0
- 
- 
+var _velocidad_base: float = 0.0   # velocidad_perseguir original, para poder frenarlo (mapa de pasos)
+
+
 func _ready() -> void:
+	_velocidad_base = velocidad_perseguir
 	super._ready()
 	recuperado.connect(_on_recuperado)
  
@@ -118,7 +119,7 @@ func _procesar(evento: Evento) -> void:
 	estado_actual = siguiente
 	if siguiente != anterior:
 		_al_cambiar_de_estado(siguiente)
-		estado_cambiado.emit(anterior, siguiente)
+		estado_cambiado.emit(anterior, siguiente, evento)
 		if depurar:
 			print("Abaddon: %s --%s--> %s" % [Estado.keys()[anterior], Evento.keys()[evento], Estado.keys()[siguiente]])
  
@@ -207,8 +208,13 @@ func _seguir_ruta() -> void:
 func _detener() -> void:
 	velocity.x = 0.0
 	velocity.z = 0.0
- 
- 
+
+
+# Multiplica la velocidad de persecución (1.0 = normal, 0.6 = 60 %). Lo usa el mapa de pasos (K).
+func set_factor_velocidad(factor: float) -> void:
+	velocidad_perseguir = _velocidad_base * factor
+
+
 func nombre_estado() -> String:
 	return Estado.keys()[estado_actual]
  
