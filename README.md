@@ -19,6 +19,7 @@ La parte visual/3D y de sonido está construida alrededor de esos dos conceptos.
 4. [Estructura del proyecto](#estructura-del-proyecto)
 5. [Estructuras de datos](#estructuras-de-datos)
    - [Formato de los mapas](#formato-de-los-mapas)
+   - [Construcción 3D de los mapas](#construcción-3d-de-los-mapas)
    - [Grafo y Dijkstra](#grafo-y-dijkstra)
    - [Autómata del enemigo](#autómata-del-enemigo)
    - [Otras estructuras](#otras-estructuras)
@@ -128,7 +129,7 @@ Horror-Doom-LFA/
 ├── Assets/
 │   ├── Chars/                 # Manos, pistola, monstruo (sprites)
 │   ├── Icons/                 # Íconos de perks
-│   └── MapAssets/             # (reservado)
+│   └── MapAssets/             # Texturas por mapa (pared, suelo, techo, lápida)
 ├── Music/                     # Música y efectos de sonido (.mp3)
 └── Automata/, Grafo/, ...     # (los DELETEME.md son marcadores de carpeta)
 ```
@@ -192,6 +193,74 @@ filas de `0` y `1`.
     "altura_cielo": String,     # altura del cielo exterior en metros
 }
 ```
+
+### Construcción 3D de los mapas
+
+Los mapas no se generan proceduralmente: son matrices diseñadas a mano en `Maps/*.txt` y
+`Scenes/mapa_3d.gd` las convierte en geometría al cargar la escena.
+
+**1. Lectura y preparación.** `Grafo.cargar()` (`Grafo/grafo.gd:7`) lee la cabecera y la matriz;
+`_leer_cabecera()` (`Grafo/grafo.gd:39`) convierte `fila,columna` a `Vector2i(columna, fila)` y
+guarda `fuente`, `tren`, `exterior` y `altura_cielo`. Después `Mapa3D._ready()`
+(`Scenes/mapa_3d.gd:69`) toma esos datos, elige la salida estratégica (salvo que
+`respetar_salida_txt` sea `true`) y construye el mapa.
+
+**2. De celda a mundo.** Cada celda mide `tam_celda = 2.0` metros y los muros miden
+`alto_muro = 3.0` metros. El centro de una celda `(x, y)` se calcula con
+`celda_a_mundo()` (`Scenes/mapa_3d.gd:216`):
+
+```text
+mundo = ((x + 0.5) * 2.0, 0.0, (y + 0.5) * 2.0)
+```
+
+**3. Muros.** `_construir_muros()` (`Scenes/mapa_3d.gd:318`) recorre la matriz por filas y agrupa
+las celdas `1` contiguas en un solo `StaticBody3D` con una `BoxMesh` por tramo. Solo construye
+muros "visibles": aquellos que tienen al menos una celda de piso en su vecindad de 8 celdas
+(`_es_visible()`, `Scenes/mapa_3d.gd:235`). Los `1` rodeados completamente por otros `1` se omiten
+para no generar geometría interior inútil. Las celdas especiales (`fuente` y `tren`) se saltan
+porque se construyen aparte.
+
+**4. Suelo y techo.** `_construir_suelo_y_techo()` (`Scenes/mapa_3d.gd:593`) crea una caja de suelo
+de 0.2 m de grosor con colisión. En interiores coloca un techo bajo a `alto_muro + 0.1`; en mapas
+con `exterior=1` coloca un cielo a `altura_cielo` metros, sin colisión, con un material unshaded,
+sin niebla y una textura de 48 m por defecto para que las estrellas no se repitan demasiado. Ese
+cielo se extiende 4 veces el tamaño del mapa para cubrir el horizonte.
+
+**5. Texturas.** `_preparar_materiales()` (`Scenes/mapa_3d.gd:250`) busca las texturas en
+`Assets/MapAssets/<NombreDelMapa>/`, donde `<NombreDelMapa>` sale del archivo después del primer
+`_` y con la primera letra en mayúscula (`mapa4_metro.txt` → `Metro/`). Para `pared`, `suelo`,
+`techo` y `lapida` carga `<nombre>_albedo.png`, `<nombre>_normal.png` y, si existe,
+`<nombre>_roughness.png`. Usa mapeo triplanar en coordenadas de mundo con una repetición de 2 m;
+si falta una textura, cae en un color plano.
+
+**6. Elementos especiales.**
+
+- **Cementerio:** los `1` aislados (sin ningún otro `1` en sus 8 vecinos y fuera del borde) se
+  convierten en lápidas con parcela, tierra, cabeza, cruz opcional y colisión
+  (`_crear_lapida()`, `Scenes/mapa_3d.gd:379`). En la matriz siguen siendo muro para el grafo y
+  la persecución, pero visualmente son tumbas. `mapa2_cementerio.txt` tiene 95.
+- **Plaza:** la cabecera `fuente=fila,columna` marca una celda `1` que no se dibuja como muro; en
+  su lugar `_construir_fuente()` (`Scenes/mapa_3d.gd:445`) crea una fuente con base de piedra,
+  agua, pedestal, recipiente superior, remate y colisión cilíndrica. En `mapa3_plaza.txt` está en
+  `fila 20, columna 20`.
+- **Metro:** la cabecera `tren=fila,columna,celdas,orientacion` reserva una huella de 2 celdas de
+  ancho por `celdas` de largo. Esas celdas son `1` en la matriz, pero `_construir_tren()`
+  (`Scenes/mapa_3d.gd:485`) las salta y construye balasto, durmientes, rieles, cuatro coches con
+  ventanas iluminadas, franja amarilla y colisión. `orientacion` puede ser `h` o `v`. En
+  `mapa4_metro.txt`: `tren=18,14,32,h`.
+
+**7. Mapas actuales.**
+
+| Mapa | Construcción |
+|---|---|
+| Pasillos | 61 × 37. Laberinto de pasillos y muros; 1180 nodos de piso. |
+| Cementerio | 40 × 40. Terreno abierto con 95 bloques aislados convertidos en lápidas y cielo estrellado a 20 m. |
+| Plaza | 41 × 41. Cuatro edificios en las esquinas con patios interiores y puertas de dos celdas de profundidad, plaza central abierta con fuente y bloques decorativos; cielo a 16 m. 1288 nodos. |
+| Metro | 60 × 40. Anillo de servicio de 4 celdas de ancho, sala central con 24 columnas, pasillos de conexión de 2 celdas de ancho y tren de 4 coches en el centro. 1484 nodos. |
+
+**8. Para añadir un mapa nuevo.** Crea el `.txt` con su cabecera y matriz (borde cerrado con `1`,
+celdas `0` conectadas y celdas especiales en `1`), añade la entrada en `Scenes/partida.gd` y, si
+quieres texturas propias, crea `Assets/MapAssets/<Nombre>/` con los PNG correspondientes.
 
 ### Grafo y Dijkstra
 
