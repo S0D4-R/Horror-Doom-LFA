@@ -2,18 +2,16 @@ class_name MapaPasos
 extends CanvasLayer
 # ─── Mapa de pasos (tecla K) ──────────────────────────────────────────────────
 # Superposición que dibuja el recorrido del autómata (Abaddon, línea roja) y del jugador
-# (línea azul), más el estado actual del autómata y el mapa completo de transiciones posibles.
+# (línea azul), más el estado actual del autómata y su historial de transiciones.
 #
 #   • NO muestra el mapa completo: solo las celdas que el jugador ya recorrió y los muros
 #     pegados a ellas (radio_vision_celdas). Lo demás queda oculto (niebla de exploración).
 #   • El recorrido de Abaddon (sus pasos) se dibuja completo.
 #
 #   • K abre / cierra el mapa. NO pausa el juego: todo sigue corriendo.
-#   • Mientras está abierto, Abaddon se mueve más lento (factor_velocidad_enemigo).
+#   • Mientras está abierto, Abaddon se queda quieto (factor_velocidad_enemigo = 0.0).
 #   • Los recorridos se van guardando siempre (aunque el mapa esté cerrado), así que al
 #     abrirlo se ve todo lo que ya pasó.
-#   • El panel TRANSICIONES muestra la tabla δ completa (todas las aristas posibles del
-#     autómata: estado + evento → estado), no un historial en tiempo real.
 #   • Con el menú de pausa (ESC) o en Game Over el mapa se oculta solo.
 #
 # Cableado (lo hace mapa_3d.gd):  MapaPasos.new() → add_child → conectar(mapa, jugador, enemigo)
@@ -30,19 +28,13 @@ const COLOR_TEXTO := Color(0.92, 0.92, 0.92)
 const COLOR_TEXTO_SUAVE := Color(0.6, 0.6, 0.65)
 
 const MAX_PUNTOS: int = 4000            # máximo de celdas guardadas por recorrido
+const MAX_TRANSICIONES: int = 7         # transiciones que se muestran en el panel lateral
 const ANCHO_PANEL_LATERAL: float = 270.0
 const MARGEN_INFERIOR: float = 96.0     # deja libre la barra del HUD
-# Mapa de transiciones: tabla estática (se ajusta la letra si no cabe).
-const TAM_MAX_FUENTE_TRANSICION: int = 12
-const TAM_MIN_FUENTE_TRANSICION: int = 9
-const ALTO_MAX_LINEA_TRANSICION: float = 18.0
-const ALTO_MIN_LINEA_TRANSICION: float = 12.0
-# Nombres cortos de los eventos, en el mismo orden que EnemigoPerseguidor.Evento.
-const ABREV_EVENTO: Array = ["CERCA", "LEJOS", "DISPARO", "RECUP.", "CONGEL.", "DESCONG."]
 
 @export var tecla: Key = KEY_K
-# 0.6 = Abaddon va al 60 % de su velocidad mientras el mapa está abierto.
-@export var factor_velocidad_enemigo: float = 0.6
+# Velocidad de Abaddon mientras el mapa está abierto: 0.0 = quieto, 0.6 = al 60 %, 1.0 = normal.
+@export var factor_velocidad_enemigo: float = 0.0
 # Cuántas celdas alrededor de cada celda recorrida se revelan (1 = los muros pegados al pasillo).
 @export var radio_vision_celdas: int = 1
 
@@ -53,8 +45,7 @@ var _jugador: Jugador
 var _enemigo: EnemigoPerseguidor
 var _camino_jugador: Array[Vector2i] = []
 var _camino_enemigo: Array[Vector2i] = []
-# Cada línea: [tipo, texto]. tipo = "estado" | "trans" | "nota".
-var _lineas_transiciones: Array = []
+var _transiciones: Array = []           # cada entrada: [estado_anterior, estado_nuevo, evento]
 var _visitadas: Dictionary = {}         # celdas por las que pasó el jugador
 var _reveladas: Dictionary = {}         # celdas visibles en el mapa (visitadas + alrededor)
 var _lienzo: Control
@@ -75,7 +66,6 @@ func _ready() -> void:
 	add_child(_lienzo)
 	_lienzo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_lienzo.draw.connect(_dibujar)
-	_construir_transiciones()
 
 
 func conectar(mapa: Mapa3D, jugador: Jugador, enemigo: EnemigoPerseguidor) -> void:
@@ -86,6 +76,7 @@ func conectar(mapa: Mapa3D, jugador: Jugador, enemigo: EnemigoPerseguidor) -> vo
 	_revelar(mapa.jugador)
 	_camino_enemigo.append(mapa.enemigo)    # celda inicial del enemigo
 	jugador.celda_cambiada.connect(_on_celda_jugador)
+	enemigo.estado_cambiado.connect(_on_estado_cambiado)
 
 
 # ── Entrada ──────────────────────────────────────────────────────────────────
@@ -108,33 +99,10 @@ func _on_celda_jugador(celda: Vector2i) -> void:
 	_registrar(_camino_jugador, celda)
 
 
-# ── Tabla δ (estática) ───────────────────────────────────────────────────────
-# Se arma una sola vez desde EnemigoPerseguidor.TRANSICIONES: todas las aristas posibles.
-func _construir_transiciones() -> void:
-	_lineas_transiciones.clear()
-	for estado in EnemigoPerseguidor.Estado.values():
-		_lineas_transiciones.append(["estado", EnemigoPerseguidor.Estado.keys()[estado]])
-		var fila: Dictionary = EnemigoPerseguidor.TRANSICIONES.get(estado, {})
-		for evento in EnemigoPerseguidor.Evento.values():
-			if not fila.has(evento):
-				continue
-			var destino: int = fila[evento]
-			_lineas_transiciones.append(["trans", "%s → %s" % [
-				_nombre_evento_corto(evento), EnemigoPerseguidor.Estado.keys()[destino]]])
-		# JUGADOR_CERCA no está en TRANSICIONES: lleva una guarda por contador de pasos.
-		if estado == EnemigoPerseguidor.Estado.IDLE \
-				or estado == EnemigoPerseguidor.Estado.ESPERANDO \
-				or estado == EnemigoPerseguidor.Estado.PERSIGUIENDO:
-			_lineas_transiciones.append(["trans", "CERCA → ESPERANDO / PERSIGUIENDO"])
-	_lineas_transiciones.append(["nota", "* CERCA: PERSIGUIENDO cada N pasos"])
-	_lineas_transiciones.append(["nota", "* ATURDIDO/CONGELADO ignoran CERCA"])
-	_lineas_transiciones.append(["nota", "* DESCONG. → IDLE o ATURDIDO*"])
-
-
-func _nombre_evento_corto(evento: int) -> String:
-	if evento >= 0 and evento < ABREV_EVENTO.size():
-		return str(ABREV_EVENTO[evento])
-	return EnemigoPerseguidor.Evento.keys()[evento]
+func _on_estado_cambiado(anterior: int, nuevo: int, evento: int) -> void:
+	_transiciones.append([anterior, nuevo, evento])
+	if _transiciones.size() > 50:
+		_transiciones.remove_at(0)
 
 
 # Marca la celda como recorrida y revela las de alrededor.
@@ -285,41 +253,30 @@ func _dibujar_panel_lateral(rect: Rect2) -> void:
 		y += 22.0
 	y += 14.0
 
-	# Historial completo de transiciones (la más reciente arriba)
-	_dibujar_transiciones(x, y, rect)
+	# Historial de transiciones (la más reciente arriba)
+	_texto("TRANSICIONES", Vector2(x, y), 15, COLOR_TEXTO_SUAVE)
+	y += 24.0
+	if _transiciones.is_empty():
+		_texto("(ninguna todavía)", Vector2(x, y), 13, COLOR_TEXTO_SUAVE)
+		y += 20.0
+	else:
+		var mostradas: int = 0
+		var i: int = _transiciones.size() - 1
+		while i >= 0 and mostradas < MAX_TRANSICIONES:
+			var t: Array = _transiciones[i]
+			_texto("%s > %s" % [EnemigoPerseguidor.Estado.keys()[t[0]], EnemigoPerseguidor.Estado.keys()[t[1]]],
+				Vector2(x, y), 14, COLOR_TEXTO)
+			y += 17.0
+			_texto("(%s)" % EnemigoPerseguidor.Evento.keys()[t[2]], Vector2(x + 10.0, y), 12, COLOR_TEXTO_SUAVE)
+			y += 21.0
+			mostradas += 1
+			i -= 1
 
 	# Aviso de velocidad, pegado al fondo del panel
-	_texto("Abaddon al %d %% de velocidad" % int(factor_velocidad_enemigo * 100.0),
-		Vector2(x, rect.end.y - 6.0), 12, COLOR_TEXTO_SUAVE)
-
-
-# Dibuja el mapa de transiciones posibles (tabla δ agrupada por estado). Es estático:
-# no cambia con la partida. Si no cabe, reduce la letra automáticamente.
-func _dibujar_transiciones(x: float, y: float, rect: Rect2) -> void:
-	_texto("TRANSICIONES POSIBLES", Vector2(x, y), 15, COLOR_TEXTO_SUAVE)
-	var n: int = _lineas_transiciones.size()
-	if n == 0:
-		return
-
-	var alto_disponible: float = rect.end.y - 28.0 - (y + 24.0)
-	var alto_linea: float = clampf(alto_disponible / float(n),
-		ALTO_MIN_LINEA_TRANSICION, ALTO_MAX_LINEA_TRANSICION)
-	var tam: int = clampi(int(alto_linea - 3.0),
-		TAM_MIN_FUENTE_TRANSICION, TAM_MAX_FUENTE_TRANSICION)
-
-	var yy: float = y + 24.0
-	for linea in _lineas_transiciones:
-		var tipo: String = linea[0]
-		var color: Color = COLOR_TEXTO
-		var sangria: float = 10.0
-		if tipo == "estado":
-			color = COLOR_ENEMIGO
-			sangria = 0.0
-		elif tipo == "nota":
-			color = COLOR_TEXTO_SUAVE
-			sangria = 0.0
-		_texto(linea[1], Vector2(x + sangria, yy), tam, color)
-		yy += alto_linea
+	var aviso: String = "Abaddon detenido mientras el mapa está abierto"
+	if factor_velocidad_enemigo > 0.0:
+		aviso = "Abaddon al %d %% de velocidad" % int(factor_velocidad_enemigo * 100.0)
+	_texto(aviso, Vector2(x, rect.end.y - 6.0), 12, COLOR_TEXTO_SUAVE)
 
 
 # ── Utilidades ───────────────────────────────────────────────────────────────
