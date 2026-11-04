@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://fjhp0oaveg7i"
+path="res://.godot/imported/Small Group People Whispering Sound Effect [yI85C7V88Sc].mp3-2520acd1e81225510e4b93766c398d34.mp3str"
+
+[deps]
+
+source_file="res://Music/Small Group People Whispering Sound Effect [yI85C7V88Sc].mp3"
+dest_files=["res://.godot/imported/Small Group People Whispering Sound Effect [yI85C7V88Sc].mp3-2520acd1e81225510e4b93766c398d34.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

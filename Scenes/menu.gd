@@ -1,21 +1,60 @@
 extends Node3D
-# Menú principal 3D al estilo Persona/Atlus.
-# El fondo es el mapa del cementerio real (con luna, niebla, luces que parpadean y ceniza).
+# Menú principal 3D de terror (estética gótica / demoníaca, inspirada en The Wolf Among Us).
+# El fondo es el mapa del cementerio real (luna, niebla, luces que parpadean y ceniza).
 # Cada pantalla del menú tiene su propio "plano" de cámara: al pulsar una opción, la cámara viaja
 # a otro ángulo del mismo escenario y aparecen las opciones siguientes.
 # Escena: nodo raíz Node3D + este script, guardada como Scenes/menu.tscn.
 
-const TITULO: String = "EL CAMINO MÁS CORTO"
-const SUBTITULO: String = "Él siempre encuentra la ruta hacia ti"
-# Fuente opcional muy parecida a la de Persona: "Anton" (licencia libre, fonts.google.com).
-const FUENTE_UI: String = "res://Assets/Fonts/Anton-Regular.ttf"
+const TITULO: String = "PANDOOMONIUM"
+const SUBTITULO: String = "Voces clariores fiunt... Appropinquant..."
+const TITULO_CAPITALIZADO: bool = true   # true = "Pandoomonium": la letra gótica en mayúsculas cuesta leerla
 const MAPA_ESCENARIO: String = "res://Maps/mapa2_cementerio.txt"
+
+# Fuentes de licencia libre (OFL). Si falta un archivo se usa una fuente del sistema.
+const FUENTE_TITULO: String = "res://Assets/Fonts/UnifrakturCook-Bold.ttf"   # gótica del título
+const FUENTE_UI: String = "res://Assets/Fonts/PirataOne-Regular.ttf"          # opciones y encabezados
+const FUENTE_TEXTO: String = "res://Assets/Fonts/Cinzel-Regular.ttf"          # descripciones y ayudas
+
+# Ajustes de aspecto
+const TINTE_ROJO: float = 0.8       # 0 = colores originales, 1 = todo en monocromo rojo
+const EROSION_TITULO: float = 0.20  # desgaste (manchas) del título: 0 = limpio
+const EROSION_UI: float = 0.09      # desgaste de las opciones
 const TAM_CELDA: float = 2.0
 const NIEBLA_VOLUMETRICA: bool = false   # ponla en true si tu PC lo aguanta (solo renderer Forward+)
 
-const SANGRE := Color(0.78, 0.04, 0.06)
-const HUESO := Color(0.94, 0.91, 0.84)
-const NEGRO := Color(0.03, 0.02, 0.02)
+const SANGRE := Color(0.80, 0.06, 0.08)
+const HUESO := Color(0.97, 0.92, 0.80)
+const NEGRO := Color(0.02, 0.0, 0.0)
+
+# Desgaste tipo "grunge": agujerea el texto con ruido, como la tipografía de la referencia.
+const SHADER_GRUNGE: String = """
+shader_type canvas_item;
+uniform sampler2D ruido : repeat_enable, filter_linear;
+uniform float erosion = 0.2;
+void fragment() {
+	vec2 uv = FRAGCOORD.xy / 256.0 + vec2(TIME * 0.010, TIME * 0.006);
+	float n = texture(ruido, uv).r;
+	float u = erosion + 0.03 * sin(TIME * 2.3);
+	COLOR.a *= smoothstep(u, u + 0.10, n);
+}
+"""
+
+# Convierte toda la imagen 3D a monocromo rojo, con grano y un pulso de luz (latido).
+const SHADER_TINTE: String = """
+shader_type canvas_item;
+uniform sampler2D pantalla : hint_screen_texture, repeat_disable, filter_linear;
+uniform float tinte = 0.8;
+void fragment() {
+	vec3 c = texture(pantalla, SCREEN_UV).rgb;
+	float g = dot(c, vec3(0.299, 0.587, 0.114));
+	vec3 rojo = vec3(g * 1.35 + 0.02, g * 0.16, g * 0.20);
+	vec3 r = mix(c, rojo, tinte);
+	float pulso = 0.93 + 0.07 * sin(TIME * 1.3);
+	float grano = fract(sin(dot(FRAGCOORD.xy + vec2(TIME * 60.0, TIME * 37.0), vec2(12.9898, 78.233))) * 43758.5453);
+	r = r * pulso + (grano - 0.5) * 0.07;
+	COLOR = vec4(r, 1.0);
+}
+"""
 
 # Planos de cámara. "desde" y "hacia" = Vector3(columna, altura en metros, fila); columna y fila
 # en unidades de celda (x.5 = centro de la celda). Todos los "desde" caen en celdas libres.
@@ -41,7 +80,12 @@ var _t: float = 0.0
 var _luces: Array = []
 
 # Menú
-var _fuente: Font
+var _fuente_titulo: Font
+var _fuente_ui: Font
+var _fuente_texto: Font
+var _fuente_espaciada: Font
+var _mat_titulo: ShaderMaterial
+var _mat_ui: ShaderMaterial
 var _pantalla: String = ""
 var _def: Dictionary = {}
 var _opciones: Array[MenuOpcion] = []
@@ -56,6 +100,7 @@ var _info_texto: Label
 var _bloque_titulo: Control
 var _titulo_lbl: Label
 var _lbl_pulsa: Label
+var _sigilo: MenuSigilo
 var _flash: ColorRect
 var _fade: ColorRect
 
@@ -63,7 +108,8 @@ var _fade: ColorRect
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE   # el juego lo deja capturado
 	Partida.activa = false
-	_cargar_fuente()
+	_cargar_fuentes()
+	_crear_materiales()
 	_crear_escenario()
 	_crear_ambiente()
 	_crear_luces()
@@ -273,7 +319,7 @@ func _definir(nombre: String) -> Dictionary:
 			return {
 				"plano": "confirmar", "encabezado": "¿LISTO?", "atras": "mapa",
 				"opciones": [
-					{"texto": "COMENZAR", "accion": _comenzar},
+					{"texto": "COMENZAR", "accion": _comenzar, "sonido": "ui_comenzar"},   # sonido especial
 					{"texto": "VOLVER", "accion": func(): _mostrar("mapa")},
 				],
 				"info": [["TU PARTIDA", resumen]],
@@ -304,6 +350,7 @@ func _elegir_mapa(i: int) -> void:
 func _atras() -> void:
 	var a: String = _def.get("atras", "")
 	if a != "":
+		Sonidos.reproducir(self, "ui_click")
 		_mostrar(a)
 
 
@@ -328,48 +375,51 @@ func _reconstruir_ui() -> void:
 	_opciones.clear()
 	_panel_info.visible = false
 	_bloque_titulo.visible = (_pantalla == "titulo")
+	create_tween().tween_property(_sigilo, "intensidad", 1.0 if _pantalla == "titulo" else 0.3, 0.8)
 
 	var retraso: float = 0.3   # las opciones entran mientras la cámara ya va viajando
 	var enc: String = _def.get("encabezado", "")
 	if enc != "":
 		var banner := MenuOpcion.new()
-		banner.configurar(enc, _fuente, 44, MenuOpcion.Estilo.BANNER, 440.0, 70.0)
+		banner.configurar(enc, _fuente_ui, 58, MenuOpcion.Estilo.BANNER, 560.0, 80.0)
+		banner.material = _mat_ui
 		_col_izq.add_child(banner)
 		_entrada(banner, retraso)
-		retraso += 0.07
+		retraso += 0.08
 
 	var lista: Array = _def.get("opciones", [])
 	for i in lista.size():
 		var op := MenuOpcion.new()
-		op.configurar(lista[i]["texto"], _fuente, 34, MenuOpcion.Estilo.OPCION, 440.0, 62.0)
-		var envoltorio := MarginContainer.new()   # escalona cada opción un poco más a la derecha
-		envoltorio.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		envoltorio.add_theme_constant_override("margin_left", i * 26)
-		envoltorio.add_child(op)
-		_col_izq.add_child(envoltorio)
+		op.configurar(lista[i]["texto"], _fuente_ui, 44, MenuOpcion.Estilo.OPCION, 560.0, 64.0)
+		op.material = _mat_ui
+		_col_izq.add_child(op)
 		op.enfocada.connect(_seleccionar.bind(i))
 		op.elegida.connect(_aceptar.bind(i))
 		_opciones.append(op)
 		_entrada(op, retraso)
-		retraso += 0.07
+		retraso += 0.08
 
 	if not _opciones.is_empty():
-		_seleccionar(_def.get("inicio", 0))
+		_seleccionar(_def.get("inicio", 0), false)   # selección inicial: sin sonido
 
 
+# Aparece parpadeando, como una luz defectuosa.
 func _entrada(c: Control, retraso: float) -> void:
-	c.scale = Vector2(0.01, 1.0)
 	c.modulate.a = 0.0
-	var tw := c.create_tween().set_parallel(true)
-	tw.tween_property(c, "scale", Vector2.ONE, 0.32).set_delay(retraso) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.tween_property(c, "modulate:a", 1.0, 0.2).set_delay(retraso)
+	var tw := c.create_tween()
+	tw.tween_property(c, "modulate:a", 0.9, 0.05).set_delay(retraso)
+	tw.tween_property(c, "modulate:a", 0.15, 0.07)
+	tw.tween_property(c, "modulate:a", 1.0, 0.12)
 
 
-func _seleccionar(i: int) -> void:
+func _seleccionar(i: int, sonar: bool = true) -> void:
 	if _opciones.is_empty():
 		return
-	_sel = clampi(i, 0, _opciones.size() - 1)
+	var nueva: int = clampi(i, 0, _opciones.size() - 1)
+	var cambio: bool = not _opciones[nueva].seleccionada   # solo suena si realmente cambia la opción
+	if sonar and cambio and not _bloqueado:
+		Sonidos.reproducir(self, "ui_select")
+	_sel = nueva
 	for k in _opciones.size():
 		_opciones[k].seleccionada = (k == _sel)
 	_actualizar_info()
@@ -379,6 +429,9 @@ func _aceptar(i: int) -> void:
 	if _bloqueado or _opciones.is_empty():
 		return
 	_sel = i
+	# Sonido de cualquier botón; COMENZAR usa uno especial que sigue sonando al cargar el juego.
+	var sonido: String = _def["opciones"][i].get("sonido", "ui_click")
+	Sonidos.reproducir(get_tree().root if sonido == "ui_comenzar" else self, sonido)
 	var accion: Callable = _def["opciones"][i]["accion"]
 	accion.call()
 
@@ -404,6 +457,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	var clic: bool = event is InputEventMouseButton and event.pressed
 	if _pantalla == "titulo":
 		if tecla or clic:
+			Sonidos.reproducir(self, "ui_click")
 			_mostrar("principal")
 		return
 	if tecla:
@@ -420,22 +474,51 @@ func _unhandled_input(event: InputEvent) -> void:
 		_atras()
 
 
+# ---------------------------------------------------------------- Fuentes y materiales
+
+func _fuente_de(ruta: String, alternativas: Array) -> Font:
+	if ResourceLoader.exists(ruta):
+		return load(ruta)
+	var s := SystemFont.new()
+	s.font_names = PackedStringArray(alternativas)
+	return s
+
+
+func _cargar_fuentes() -> void:
+	_fuente_titulo = _fuente_de(FUENTE_TITULO, ["Old English Text MT", "Blackadder ITC", "Georgia", "serif"])
+	_fuente_ui = _fuente_de(FUENTE_UI, ["Old English Text MT", "Georgia", "serif"])
+	_fuente_texto = _fuente_de(FUENTE_TEXTO, ["Georgia", "Times New Roman", "serif"])
+	var fv := FontVariation.new()   # misma fuente con letras separadas, para subtítulos solemnes
+	fv.base_font = _fuente_texto
+	fv.spacing_glyph = 5
+	_fuente_espaciada = fv
+
+
+func _crear_materiales() -> void:
+	var img := Image.create(64, 64, false, Image.FORMAT_L8)
+	for y in 64:
+		for x in 64:
+			var v: float = randf()
+			img.set_pixel(x, y, Color(v, v, v))
+	var ruido := ImageTexture.create_from_image(img)
+	var sh := Shader.new()
+	sh.code = SHADER_GRUNGE
+	_mat_titulo = ShaderMaterial.new()
+	_mat_titulo.shader = sh
+	_mat_titulo.set_shader_parameter("ruido", ruido)
+	_mat_titulo.set_shader_parameter("erosion", EROSION_TITULO)
+	_mat_ui = ShaderMaterial.new()
+	_mat_ui.shader = sh
+	_mat_ui.set_shader_parameter("ruido", ruido)
+	_mat_ui.set_shader_parameter("erosion", EROSION_UI)
+
+
 # ---------------------------------------------------------------- Construcción de la interfaz
 
-func _cargar_fuente() -> void:
-	if ResourceLoader.exists(FUENTE_UI):
-		_fuente = load(FUENTE_UI)
-	else:
-		var s := SystemFont.new()
-		s.font_names = PackedStringArray(["Impact", "Haettenschweiler", "Arial Black", "Arial"])
-		s.font_weight = 800
-		_fuente = s
-
-
-func _lbl(texto: String, tam: int, color: Color) -> Label:
+func _lbl(texto: String, tam: int, color: Color, fuente: Font = null) -> Label:
 	var l := Label.new()
 	l.text = texto
-	l.add_theme_font_override("font", _fuente)
+	l.add_theme_font_override("font", fuente if fuente != null else _fuente_texto)
 	l.add_theme_font_size_override("font_size", tam)
 	l.add_theme_color_override("font_color", color)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -446,8 +529,8 @@ func _lbl(texto: String, tam: int, color: Color) -> Label:
 
 func _crear_vineta() -> GradientTexture2D:
 	var g := Gradient.new()
-	g.offsets = PackedFloat32Array([0.0, 0.55, 1.0])
-	g.colors = PackedColorArray([Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.12), Color(0, 0, 0, 0.9)])
+	g.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	g.colors = PackedColorArray([Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.18), Color(0, 0, 0, 0.94)])
 	var tex := GradientTexture2D.new()
 	tex.gradient = g
 	tex.fill = GradientTexture2D.FILL_RADIAL
@@ -462,6 +545,18 @@ func _crear_ui() -> void:
 	var capa := CanvasLayer.new()
 	add_child(capa)
 
+	if TINTE_ROJO > 0.0:   # monocromo rojo sobre la imagen 3D (debajo de la interfaz)
+		var tinte := ColorRect.new()
+		tinte.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var sht := Shader.new()
+		sht.code = SHADER_TINTE
+		var mt := ShaderMaterial.new()
+		mt.shader = sht
+		mt.set_shader_parameter("tinte", TINTE_ROJO)
+		tinte.material = mt
+		capa.add_child(tinte)
+		tinte.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 	var vineta := TextureRect.new()
 	vineta.texture = _crear_vineta()
 	vineta.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -469,6 +564,10 @@ func _crear_ui() -> void:
 	vineta.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	capa.add_child(vineta)
 	vineta.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	_sigilo = MenuSigilo.new()   # círculo ritual y gotas de sangre
+	capa.add_child(_sigilo)
+	_sigilo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var raiz := Control.new()
 	raiz.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -491,8 +590,8 @@ func _crear_ui() -> void:
 	_col_izq = VBoxContainer.new()
 	_col_izq.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_col_izq.alignment = BoxContainer.ALIGNMENT_CENTER
-	_col_izq.add_theme_constant_override("separation", 14)
-	_col_izq.custom_minimum_size = Vector2(560, 0)
+	_col_izq.add_theme_constant_override("separation", 6)
+	_col_izq.custom_minimum_size = Vector2(600, 0)
 	fila.add_child(_col_izq)
 
 	var relleno := Control.new()
@@ -509,17 +608,17 @@ func _crear_ui() -> void:
 	_crear_bloque_titulo(raiz)
 
 	var pista := _lbl("MOUSE o W/S  elegir      CLIC o ENTER  aceptar      ESC o CLIC DERECHO  volver",
-		16, HUESO.darkened(0.35))
+		15, HUESO.darkened(0.45), _fuente_texto)
 	pista.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	raiz.add_child(pista)
 	pista.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	pista.offset_left = -780.0
+	pista.offset_left = -800.0
 	pista.offset_right = -40.0
 	pista.offset_top = -46.0
 	pista.offset_bottom = -16.0
 
 	_flash = ColorRect.new()   # destello rojo al cambiar de pantalla
-	_flash.color = Color(0.85, 0.05, 0.06, 0.0)
+	_flash.color = Color(0.85, 0.02, 0.04, 0.0)
 	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	capa.add_child(_flash)
 	_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -534,27 +633,31 @@ func _crear_ui() -> void:
 func _crear_panel_info(padre: Control) -> void:
 	_panel_info = PanelContainer.new()
 	_panel_info.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_panel_info.custom_minimum_size = Vector2(430, 0)
-	_panel_info.rotation_degrees = -1.5
+	_panel_info.custom_minimum_size = Vector2(460, 0)
 	var st := StyleBoxFlat.new()
-	st.bg_color = Color(NEGRO, 0.9)
-	st.border_color = SANGRE
-	st.set_border_width_all(2)
-	st.border_width_left = 10
-	st.set_content_margin_all(22)
+	st.bg_color = Color(0.03, 0.0, 0.0, 0.82)
+	st.border_color = Color(SANGRE, 0.75)
+	st.set_border_width_all(1)
+	st.border_width_top = 3
+	st.border_width_bottom = 3
+	st.shadow_color = Color(0.6, 0.0, 0.02, 0.4)   # aura de sangre
+	st.shadow_size = 20
+	st.set_content_margin_all(26)
 	_panel_info.add_theme_stylebox_override("panel", st)
 	var v := VBoxContainer.new()
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_theme_constant_override("separation", 12)
 	_panel_info.add_child(v)
-	_info_titulo = _lbl("", 38, SANGRE)
+	_info_titulo = _lbl("", 46, SANGRE, _fuente_ui)
 	_info_titulo.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_info_titulo.add_theme_color_override("font_outline_color", NEGRO)
+	_info_titulo.add_theme_constant_override("outline_size", 6)
 	v.add_child(_info_titulo)
-	_info_texto = _lbl("", 21, HUESO)
+	_info_texto = _lbl("", 19, HUESO, _fuente_texto)
 	_info_texto.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_info_texto.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_info_texto.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_info_texto.custom_minimum_size = Vector2(380, 0)
+	_info_texto.custom_minimum_size = Vector2(400, 0)
 	v.add_child(_info_texto)
 	_panel_info.visible = false
 	padre.add_child(_panel_info)
@@ -566,7 +669,7 @@ func _crear_bloque_titulo(raiz: Control) -> void:
 	m.add_theme_constant_override("margin_left", 80)
 	m.add_theme_constant_override("margin_right", 80)
 	m.add_theme_constant_override("margin_top", 40)
-	m.add_theme_constant_override("margin_bottom", 120)
+	m.add_theme_constant_override("margin_bottom", 110)
 	raiz.add_child(m)
 	m.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_bloque_titulo = m
@@ -574,24 +677,40 @@ func _crear_bloque_titulo(raiz: Control) -> void:
 	var v := VBoxContainer.new()
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.alignment = BoxContainer.ALIGNMENT_END
-	v.add_theme_constant_override("separation", 6)
+	v.add_theme_constant_override("separation", 10)
 	m.add_child(v)
 
-	_titulo_lbl = _lbl(TITULO, 104, HUESO)
-	_titulo_lbl.add_theme_color_override("font_outline_color", Color.BLACK)
-	_titulo_lbl.add_theme_constant_override("outline_size", 12)
-	_titulo_lbl.add_theme_color_override("font_shadow_color", SANGRE)
-	_titulo_lbl.add_theme_constant_override("shadow_offset_x", 8)
-	_titulo_lbl.add_theme_constant_override("shadow_offset_y", 8)
-	_titulo_lbl.rotation_degrees = -3.0
+	var titulo: String = TITULO
+	if TITULO_CAPITALIZADO:
+		titulo = TITULO.substr(0, 1).to_upper() + TITULO.substr(1).to_lower()
+	_titulo_lbl = _lbl(titulo, 120, HUESO, _fuente_titulo)
+	_titulo_lbl.add_theme_color_override("font_outline_color", NEGRO)
+	_titulo_lbl.add_theme_constant_override("outline_size", 14)
+	_titulo_lbl.add_theme_color_override("font_shadow_color", Color(SANGRE, 0.9))
+	_titulo_lbl.add_theme_constant_override("shadow_offset_x", 7)
+	_titulo_lbl.add_theme_constant_override("shadow_offset_y", 7)
+	_titulo_lbl.material = _mat_titulo
 	v.add_child(_titulo_lbl)
-	v.add_child(_lbl(SUBTITULO, 28, SANGRE))
+	v.add_child(_lbl(SUBTITULO.to_upper(), 22, SANGRE, _fuente_espaciada))
 	var espacio := Control.new()
-	espacio.custom_minimum_size = Vector2(0, 30)
+	espacio.custom_minimum_size = Vector2(0, 26)
 	espacio.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(espacio)
-	_lbl_pulsa = _lbl("PULSA CUALQUIER TECLA", 30, HUESO)
+	_lbl_pulsa = _lbl("PULSA CUALQUIER TECLA", 24, HUESO, _fuente_espaciada)
 	v.add_child(_lbl_pulsa)
+
+	_ajustar_titulo()
+	get_viewport().size_changed.connect(_ajustar_titulo)
+
+
+# La letra gótica es ancha: reduce el tamaño si el título no cabe en la ventana.
+func _ajustar_titulo() -> void:
+	var disponible: float = get_viewport().get_visible_rect().size.x - 200.0
+	var tam: int = 120
+	var ancho: float = _fuente_titulo.get_string_size(_titulo_lbl.text, HORIZONTAL_ALIGNMENT_LEFT, -1, tam).x
+	if ancho > disponible and ancho > 0.0:
+		tam = int(tam * disponible / ancho)
+	_titulo_lbl.add_theme_font_size_override("font_size", tam)
 
 
 # ---------------------------------------------------------------- Animación por frame
@@ -615,7 +734,10 @@ func _process(delta: float) -> void:
 			f *= 0.15
 		luz.light_energy = l["base"] * f
 
-	# Título: parpadeo ocasional y mensaje que late.
+	# Título: parpadeo ocasional, mensaje que late y gotas de sangre colgando de las letras.
 	if _bloque_titulo.visible:
 		_titulo_lbl.modulate.a = randf_range(0.3, 0.6) if randf() < 0.01 else 0.95
 		_lbl_pulsa.modulate.a = 0.45 + 0.55 * (0.5 + 0.5 * sin(_t * 4.0))
+		_sigilo.rect_goteo = _titulo_lbl.get_global_rect()
+	else:
+		_sigilo.rect_goteo = Rect2()

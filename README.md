@@ -1,0 +1,375 @@
+# PANDOOMONIUM — Horror Doom LFA
+
+Juego de terror en **primera persona** hecho con **Godot 4.7**. El jugador recorre laberintos oscuros
+mientras es perseguido por **Abaddon**, un enemigo controlado por un autómata finito que calcula su
+camino con **Dijkstra** sobre un grafo de celdas. El objetivo depende del modo: escapar de la salida
+o sobrevivir el mayor tiempo posible.
+
+Pertenece a la materia **Lenguajes Formales y Autómatas (LFA)**: el núcleo del proyecto es la
+implementación de un **grafo** (mapas + camino más corto) y una **máquina de estados finita** (IA del enemigo).
+La parte visual/3D y de sonido está construida alrededor de esos dos conceptos.
+
+---
+
+## Índice
+
+1. [Cómo ejecutar](#cómo-ejecutar)
+2. [Modos de juego](#modos-de-juego)
+3. [Controles](#controles)
+4. [Estructura del proyecto](#estructura-del-proyecto)
+5. [Estructuras de datos](#estructuras-de-datos)
+   - [Formato de los mapas](#formato-de-los-mapas)
+   - [Grafo y Dijkstra](#grafo-y-dijkstra)
+   - [Autómata del enemigo](#autómata-del-enemigo)
+   - [Otras estructuras](#otras-estructuras)
+6. [Flujo de escenas y arquitectura](#flujo-de-escenas-y-arquitectura)
+7. [Sistemas del juego](#sistemas-del-juego)
+8. [Multimedia (assets y audio)](#multimedia-assets-y-audio)
+9. [Easter eggs](#easter-eggs)
+10. [Notas y estado actual](#notas-y-estado-actual)
+
+---
+
+## Cómo ejecutar
+
+1. Instalar **Godot 4.7** (el proyecto usa `config/features = "4.7", "GL Compatibility"`).
+2. Abrir la carpeta raíz del repositorio desde el administrador de proyectos de Godot.
+3. Ejecutar con **F5**. La escena principal es `Scenes/main_menu_interactive.tscn`
+   (`run/main_scene` en `project.godot`).
+
+Configuración relevante de `project.godot`:
+
+| Ajuste | Valor |
+|---|---|
+| Nombre | `HorrorDoom` |
+| Motor de física | `Jolt Physics` |
+| Render | `gl_compatibility` (compatible con GPUs modestas) |
+| Escena principal | `Scenes/main_menu_interactive.tscn` |
+
+> No hay build de exportación ni dependencias externas: todo el código es **GDScript**.
+
+---
+
+## Modos de juego
+
+Los modos y mapas se definen en `Scenes/partida.gd` (`MODOS` y `MAPAS`).
+
+| Modo | Descripción |
+|---|---|
+| **U R D4MN3D** | Abaddon te persigue sin descanso. Cuanto más cerca está, más rojo se vuelve el mundo, más fuerte suena tu respiración y más se apaga tu linterna. Debes llegar a la salida. |
+| **SUPERVIVENCIA** | No hay salida. Aguanta el mayor tiempo posible con la ayuda de los perks. |
+| **Dijkstra** | Modo "extra" definido en el menú (ver [Notas](#notas-y-estado-actual)); comparte comportamiento con Supervivencia. |
+
+Mapas disponibles:
+
+| Mapa | Archivo | Tamaño | Nodos aprox. |
+|---|---|---|---|
+| Pasillos | `Maps/mapa1_pasillos.txt` | 61 × 37 | 1180 |
+| Cementerio | `Maps/mapa2_cementerio.txt` | 40 × 40 | 1195 |
+| Plaza | `Maps/mapa3_plaza.txt` | 41 × 41 | 1002 |
+| Ciudad | `Maps/mapa4_ciudad.txt` | 60 × 40 | 1136 |
+
+---
+
+## Controles
+
+| Acción | Tecla / botón |
+|---|---|
+| Moverse | `W A S D` / flechas |
+| Mirar | Mouse |
+| Girar | Flechas izquierda/derecha |
+| Correr (consume estamina) | `Shift` |
+| Linterna | `1` |
+| Pistola | `2` |
+| Alternar linterna/pistola | Rueda del mouse |
+| Disparar | Clic izquierdo |
+| Radar | `R` |
+| Pausa | `Esc` |
+| Reintentar (en Game Over) | `R` |
+| Volver al menú (en Game Over) | `M` |
+| Golpe de prueba (debug) | `H` |
+
+En el menú: `W/S` o mouse para elegir, `Enter`/clic para aceptar, `Esc`/clic derecho para volver.
+
+---
+
+## Estructura del proyecto
+
+```
+Horror-Doom-LFA/
+├── project.godot              # Configuración de Godot
+├── icon.svg
+├── Maps/                      # Mapas de texto (matrices 0/1)
+│   ├── mapa1_pasillos.txt
+│   ├── mapa2_cementerio.txt
+│   ├── mapa3_plaza.txt
+│   └── mapa4_ciudad.txt
+├── Grafo/
+│   └── grafo.gd               # Carga de mapas + grafo + Dijkstra (class_name Grafo)
+├── Automata/
+│   └── enemigo_perseguidor.gd # Autómata finito de Abaddon (class_name EnemigoPerseguidor)
+├── Scenes/                    # Lógica del juego y escenas
+│   ├── main_menu_interactive.tscn  # Escena principal (menú 3D)
+│   ├── main_menu.tscn              # Variante alternativa del menú (Control)
+│   ├── map_palace.tscn             # Escena de juego (nodo raíz + mapa_3d.gd)
+│   ├── menu.gd                     # Menú principal 3D
+│   ├── menu_opcion.gd              # Botón/opción dibujada a mano
+│   ├── menu_sigilo.gd              # Pentagrama/círculo ritual y gotas
+│   ├── partida.gd                  # Estado compartido: modo, mapa, escenas
+│   ├── mapa_3d.gd                  # Construye el mapa 3D, salida, perks, easter eggs
+│   ├── jugador.gd                  # Jugador en primera persona (class_name Jugador)
+│   ├── enemigo.gd                  # Base de Abaddon: movimiento, ataque, sprite (class_name Abaddon)
+│   ├── hud.gd                      # HUD, pausa, game over, efectos (class_name HUD)
+│   ├── radar_hud.gd                # Minimapa/radar con ruta Dijkstra (class_name RadarHUD)
+│   ├── perk_item.gd                # Ítem flotante recogible (class_name PerkItem)
+│   ├── perks.gd                    # Catálogo de perks (class_name Perks)
+│   ├── sonidos.gd                  # Sistema de audio (class_name Sonidos)
+│   └── Assets/Fonts/               # Fuentes OFL (góticas) + licencias
+├── Assets/
+│   ├── Chars/                 # Manos, pistola, monstruo (sprites)
+│   ├── Icons/                 # Íconos de perks
+│   └── MapAssets/             # (reservado)
+├── Music/                     # Música y efectos de sonido (.mp3)
+└── Automata/, Grafo/, ...     # (los DELETEME.md son marcadores de carpeta)
+```
+
+**Dónde está cada cosa (guía rápida):**
+
+| Quiero… | Archivo |
+|---|---|
+| Entender el grafo y Dijkstra | `Grafo/grafo.gd` |
+| Entender la IA del enemigo | `Automata/enemigo_perseguidor.gd` + `Scenes/enemigo.gd` |
+| Cambiar mapas/modos | `Scenes/partida.gd` y `Maps/*.txt` |
+| Cambiar la generación 3D | `Scenes/mapa_3d.gd` |
+| Cambiar controles/física del jugador | `Scenes/jugador.gd` |
+| Cambiar HUD, pausa o game over | `Scenes/hud.gd` |
+| Cambiar el radar | `Scenes/radar_hud.gd` |
+| Cambiar perks | `Scenes/perks.gd` y `Scenes/perk_item.gd` |
+| Cambiar sonidos | `Scenes/sonidos.gd` + `Music/` |
+| Cambiar el menú | `Scenes/menu.gd`, `menu_opcion.gd`, `menu_sigilo.gd` |
+
+---
+
+## Estructuras de datos
+
+### Formato de los mapas
+
+Los mapas son archivos de texto en `Maps/`. Cada línea que empieza con `#` es cabecera; el resto son
+filas de `0` y `1`.
+
+```text
+# nombre=Cementerio | tamano=40x40 | formato fila,columna
+# jugador=38,38 salida=1,1 enemigo=9,34
+1111111111111111111111111111111111111111
+1000000000000000000000000000000000000001
+...
+```
+
+- **Convención:** `0 = piso`, `1 = muro`.
+- Una celda es `Vector2i(x = columna, y = fila)`.
+- La matriz se indexa como `matriz[y][x]` (fila primero).
+- Las cabeceras `jugador`, `salida` y `enemigo` se escriben como `fila,columna` y se convierten a
+  `Vector2i(columna, fila)`.
+
+`Grafo.cargar(ruta)` (`Grafo/grafo.gd:7`) devuelve un `Dictionary`:
+
+```gdscript
+{
+    "matriz": Array,        # Array de filas; cada fila es un Array de enteros 0/1
+    "jugador": Vector2i,    # posición inicial del jugador
+    "salida": Vector2i,     # celda de salida (puede recalcularse)
+    "enemigo": Vector2i,    # posición inicial de Abaddon
+}
+```
+
+### Grafo y Dijkstra
+
+Implementado en `Grafo/grafo.gd`:
+
+- **Nodos:** cada celda de piso (`0`) es un nodo.
+- **Aristas:** conexiones en 4 direcciones entre celdas de piso (`Grafo.vecinos()`).
+- **Peso:** cada arista cuesta `1` (grafo no ponderado; Dijkstra se reduce a BFS con cola de prioridad).
+- **Búsqueda:** `Grafo.dijkstra(matriz, inicio, meta)` devuelve `Array[Vector2i]` con la ruta completa
+  (incluye inicio y meta) o un arreglo vacío si no hay camino.
+- **Cola de prioridad:** min-heap binario implementado a mano (`_heap_meter`, `_heap_sacar`) sobre un
+  `Array` de pares `[distancia, celda]`.
+- **Estructuras auxiliares:** dos `Dictionary`:
+  - `dist[celda] = distancia mínima`
+  - `previo[celda] = celda anterior` (para reconstruir la ruta)
+
+La misma función se reutiliza en tres lugares:
+- Persecución de Abaddon (`Scenes/enemigo.gd:159`).
+- Movimiento del autómata (`Automata/enemigo_perseguidor.gd:78`).
+- Ruta a la salida dibujada en el radar (`Scenes/radar_hud.gd:78`).
+
+`Scenes/mapa_3d.gd` incluye además `_dijkstra_distancias()` para calcular, desde el jugador y desde el
+enemigo, la distancia a todas las celdas; con eso elige una **salida estratégica** (lejos, accesible y en
+un corredor de baja conectividad).
+
+### Autómata del enemigo
+
+`Automata/enemigo_perseguidor.gd` define una **máquina de estados finita (Mealy)** que hereda de
+`Abaddon` (`Scenes/enemigo.gd`):
+
+```text
+Q  = { IDLE, ESPERANDO, PERSIGUIENDO, ATURDIDO, CONGELADO }
+Σ  = { JUGADOR_CERCA, JUGADOR_LEJOS, DISPARO, RECUPERADO, CONGELAR, DESCONGELAR }
+q0 = IDLE
+δ  = tabla TRANSICIONES (estado, evento) -> estado
+```
+
+Detalles:
+
+- La tabla de transición es un `Dictionary` constante `TRANSICIONES`
+  (`Automata/enemigo_perseguidor.gd:27`). Si el par `(estado, evento)` no existe, el estado no cambia.
+- `JUGADOR_CERCA` **no** está en la tabla porque tiene una guarda: solo pasa a `PERSIGUIENDO` cada
+  `pasos_por_movimiento` pasos del jugador (o de inmediato si `persecucion_continua = true`).
+- La distancia "cerca/lejos" se mide en **nodos del grafo** (longitud de la ruta Dijkstra), no en línea
+  recta; así una pared entre ambos cuenta como distancia.
+- La salida (acción) al entrar en `PERSIGUIENDO` es avanzar una celda siguiendo la ruta calculada.
+- `_recalcular_ruta()` y `_seguir_ruta()` se heredan de `Abaddon` y se sobrescriben según el modo.
+- La señal `estado_cambiado(anterior, nuevo)` permite observar las transiciones.
+
+### Otras estructuras
+
+| Estructura | Dónde | Uso |
+|---|---|---|
+| `Array[Vector2i]` (ruta) | `enemigo.gd`, `radar_hud.gd` | Camino devuelto por Dijkstra |
+| `Dictionary` de perks | `mapa_3d.gd` (`_perks_en_mapa`, `posiciones_perks`) | Tipo de perk → nodo / celda |
+| `Array` de mapas/modos | `partida.gd` (`MAPAS`, `MODOS`) | Catálogo de opciones del menú |
+| `Dictionary` de sonidos | `sonidos.gd` (`ARCHIVOS`) | Evento lógico → archivo en `Music/` |
+| Buffer de entrada | `mapa_3d.gd` (`_ee_buffer`) | Detección de códigos Konami/lluvia |
+| `Dictionary` de distancias | `grafo.gd`, `mapa_3d.gd` | Resultado de Dijkstra y elección de salida |
+
+---
+
+## Flujo de escenas y arquitectura
+
+```text
+main_menu_interactive.tscn (menu.gd)
+        │  COMENZAR
+        ▼
+map_palace.tscn (mapa_3d.gd)
+        │  crea en tiempo de ejecución:
+        │    ├── muros / suelo / techo
+        │    ├── Jugador (jugador.gd)
+        │    ├── EnemigoPerseguidor (enemigo_perseguidor.gd → enemigo.gd)
+        │    ├── PerkItem ×3 (perk_item.gd)
+        │    └── HUD (hud.gd) + RadarHUD (radar_hud.gd)
+        │
+        ├── victoria → HUD → menú
+        └── muerte   → HUD Game Over → R reintenta / M menú
+```
+
+- `Partida` (`Scenes/partida.gd`) guarda el modo y el mapa elegidos en **variables estáticas**, por lo que
+  sobreviven al cambio de escena sin necesidad de un autoload.
+- Casi todos los nodos visuales se **crean por código** en `_ready()`; las escenas `.tscn` son mínimas
+  (un nodo raíz con su script). Esto facilita leer la lógica sin inspeccionar el editor.
+- Señales clave del jugador: `celda_cambiada`, `perk_recogido`, `arma_cambiada`, `disparo_realizado`,
+  `escudo_roto`, `ventana_huida_iniciada/terminada`, `jugador_muerto`.
+- `mapa_3d.gd` conecta `celda_cambiada` con el autómata (`registrar_movimiento_jugador`) y con la
+  detección de llegada a la salida.
+
+---
+
+## Sistemas del juego
+
+### Jugador (`Scenes/jugador.gd`)
+Primera persona con cámara, linterna (`SpotLight3D`) y colisión de cápsula.
+- **Estamina:** `STAMINA_MAX = 5 s`; correr consume y caminar recarga.
+- **Armas:** linterna y pistola; la pistola solo se obtiene con el perk correspondiente.
+- **Persecución:** la cercanía al enemigo controla el volumen de respiración/susurros, el tinte rojo y el
+  apagado automático de la linterna (con histéresis).
+- **Escudo:** absorbe un golpe y abre una "ventana de huida" de 10 s (con reloj sonando).
+- **Muerte:** la cámara cae al suelo y el HUD muestra Game Over.
+
+### Abaddon (`Scenes/enemigo.gd`)
+`CharacterBody3D` que persigue al jugador usando Dijkstra.
+- Velocidad de persecución `4.8 m/s`: supera al jugador caminando (`4.2`) pero no corriendo (`7.0`).
+- Al recibir un disparo queda **aturdido** entre 2 y 4 s.
+- Se puede **congelar/descongelar** (usado por la ventana de huida y los easter eggs).
+- Sprite 2D tipo billboard (`Assets/Chars/monster.png`); si falta, usa una cápsula provisional.
+
+### HUD (`Scenes/hud.gd`)
+Construido por código: manos con arma, mira, munición, íconos de radar/escudo, barra de estamina,
+mensajes, pantalla de Game Over/Victoria, menú de pausa (`Esc`) y efectos de pantalla
+(shader rojo de cercanía, inversión de colores durante la huida, pentagrama).
+
+### Radar (`Scenes/radar_hud.gd`)
+Minimapa circular que dibuja los muros cercanos, la ruta Dijkstra hacia la salida, el enemigo y la salida.
+Cada 3 giros del escáner muestra una flecha hacia el perk más cercano. Dura `7 s`.
+
+### Perks (`Scenes/perks.gd`, `Scenes/perk_item.gd`)
+Tres tipos: **pistola**, **radar** y **escudo**. Flotan, brillan y se recogen al tocarlos. Cuando se
+recogen todos, el mapa los regenera uno a uno cada 20 s (`INTERVALO_REGENERACION`).
+
+### Audio (`Scenes/sonidos.gd`)
+Sistema centralizado: cada evento lógico se mapea a un nombre de archivo en `Music/`. Busca `.ogg`,
+`.wav` o `.mp3` y cachea los recursos. Soporta reproducción única y bucles. Si falta un archivo, avisa una
+sola vez por consola y no suena.
+
+### Menú (`Scenes/menu.gd`, `menu_opcion.gd`, `menu_sigilo.gd`)
+Menú 3D con el mapa del cementerio como escenario, cámara que viaja entre "planos", tipografía gótica,
+tinte rojo, ceniza, luces defectuosas, pentagrama y gotas de sangre. Las opciones se dibujan a mano
+(sin cajas) y reaccionan al mouse/teclado.
+
+---
+
+## Multimedia (assets y audio)
+
+- **Personajes/UI:** `Assets/Chars/` (manos, pistola, monstruo, etc.) y `Assets/Icons/` (perks).
+- **Fuentes:** `Scenes/Assets/Fonts/` (UnifrakturCook, PirataOne, Cinzel) con licencias OFL incluidas.
+- **Música/SFX:** `Music/`. El mapeo evento → archivo está en `Scenes/sonidos.gd` (`ARCHIVOS`):
+
+| Evento | Archivo |
+|---|---|
+| Pasos al caminar | `steps.mp3` |
+| Pasos al correr | `Running footsteps [QnJ26_ZlEbo].mp3` |
+| Recoger ítem | `pickupitem.mp3` |
+| Linterna | `Flashlight Sound Effect sfx [-38q978nFnc].mp3` |
+| Disparo | `shot.mp3` |
+| Respiración cercana | `heavy breathing sound effect [54Pqc-Abgas].mp3` |
+| Susurros | `whispers.mp3` |
+| Reloj (huida) | `ticking.mp3` |
+| Menú | `select.mp3`, `accept.mp3` |
+| Música de mapa | `mapa1_pasillos.mp3`, `mapa2_cementerio.mp3`, `mapa3_plaza.mp3` |
+
+Los archivos `.import` son metadatos generados por Godot y no deben editarse a mano.
+
+---
+
+## Easter eggs
+
+Definidos en `Scenes/mapa_3d.gd`:
+
+- **Konami:** `↑ ↑ ↓ ↓ ← → ← → clic-izq clic-der` → teletransporta al jugador a la salida.
+- **Lluvia:** `← → clic-der clic-der` → hace aparecer junto al jugador todos los perks que falten.
+
+Las entradas se acumulan en un buffer de 10 caracteres y se comparan por sufijo.
+
+---
+
+## Notas y estado actual
+
+- **Motor:** Godot 4.7, GDScript, renderer GL Compatibility. No hay tests automatizados.
+- **Menú:** `menu.gd` busca las fuentes en `res://Assets/Fonts/`, pero los archivos están en
+  `res://Scenes/Assets/Fonts/`; si no se encuentran, usa fuentes del sistema. Es un ajuste pendiente
+  (mover la carpeta o corregir la ruta).
+- **Modo Dijkstra:** aparece en `Partida.MODOS` (índice 2) pero el enum `Partida.Modo` solo define
+  `U_R_D4MN3D` y `SUPERVIVENCIA`. Al elegirlo se comporta como Supervivencia (sin salida estratégica ni
+  efectos de cercanía). Pendiente de implementar o retirar del menú.
+- **Audio faltante:** `escudo_roto` no tiene archivo en `Music/`; el sistema lo avisa y continúa sin sonido.
+- **Assets provisionales:** hay sprites alternativos (`mano_linterna.png`, `mano_pistola.png`, etc.) que
+  no se usan actualmente; el HUD usa las versiones `*_recolor`.
+- **Rendimiento:** los mapas se construyen por código creando un `StaticBody3D` por bloque de muro; los
+  mapas grandes pueden generar muchos nodos. El renderer es GL Compatibility para amplia compatibilidad.
+
+---
+
+## Créditos
+
+- Proyecto académico de **Lenguajes Formales y Autómatas**.
+- Repositorio: <https://github.com/S0D4-R/Horror-Doom-LFA>
+- Fuentes bajo licencia **SIL Open Font License** (ver `Scenes/Assets/Fonts/LICENCIAS.txt`).
+- Efectos de sonido y música de uso libre provenientes de distintas fuentes públicas (ver nombres de
+  archivo en `Music/`).
