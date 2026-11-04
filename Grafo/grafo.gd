@@ -10,6 +10,12 @@ static func cargar(ruta: String) -> Dictionary:
 		"jugador": Vector2i.ZERO,
 		"salida": Vector2i.ZERO,
 		"enemigo": Vector2i.ZERO,
+		"fuente": Vector2i(-1, -1),
+		"tren": Vector2i(-1, -1),
+		"tren_largo": 0,
+		"tren_orientacion": "h",
+		"exterior": "0",
+		"altura_cielo": "0",
 	}
 	var f := FileAccess.open(ruta, FileAccess.READ)
 	if f == null:
@@ -35,9 +41,20 @@ static func _leer_cabecera(linea: String, datos: Dictionary) -> void:
 		if not token.contains("="):
 			continue
 		var kv := token.split("=")
-		if kv[0] in ["jugador", "salida", "enemigo"]:
+		if kv.size() < 2:
+			continue
+		if kv[0] in ["jugador", "salida", "enemigo", "fuente", "tren"]:
 			var p := kv[1].split(",")
+			if p.size() < 2:
+				continue
 			datos[kv[0]] = Vector2i(int(p[1]), int(p[0]))
+			if kv[0] == "tren":
+				if p.size() > 2:
+					datos["tren_largo"] = int(p[2])
+				if p.size() > 3:
+					datos["tren_orientacion"] = p[3]
+		elif kv[0] in ["exterior", "altura_cielo"]:
+			datos[kv[0]] = kv[1]
  
  
 static func es_piso(m: Array, c: Vector2i) -> bool:

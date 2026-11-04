@@ -43,15 +43,15 @@ const MAPAS: Array = [
 		"nombre": "PLAZA",
 		"archivo": "res://Maps/mapa3_plaza.txt",
 		"tam": "41 x 41",
-		"nodos": 1002,
-		"desc": "Una plaza abierta rodeada de pasillos estrechos. Ves venir al enemigo... y él a ti.",
+		"nodos": 1288,
+		"desc": "Una plaza abierta con una fuente central. Alrededor, edificios en ruinas y callejones estrechos.",
 	},
 	{
-		"nombre": "CIUDAD",
-		"archivo": "res://Maps/mapa4_ciudad.txt",
+		"nombre": "METRO",
+		"archivo": "res://Maps/mapa4_metro.txt",
 		"tam": "60 x 40",
-		"nodos": 1136,
-		"desc": "Calles vacías, edificios huecos y autos abandonados. Cada esquina esconde una salida o una trampa.",
+		"nodos": 1484,
+		"desc": "Una estación de metro abandonada. Andenes, columnas y un tren detenido en la penumbra.",
 	},
 ]
 

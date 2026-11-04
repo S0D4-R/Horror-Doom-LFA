@@ -24,6 +24,12 @@ extends Node3D
 @export var con_techo: bool = true
 @export var semilla: int = 0
 
+@export_group("Texturas")
+@export var usar_texturas: bool = true
+# Cada cuántos metros se repite una textura (2 m ≈ una celda).
+@export var metros_por_textura: float = 2.0
+@export var metros_por_textura_cielo: float = 48.0
+
 # Fuerza la salida que viene en el .txt en lugar de calcular una estratégica.
 # Pon esto a true si ya ajustaste la salida a mano en el .txt y no quieres que se mueva.
 @export var respetar_salida_txt: bool = false
@@ -32,12 +38,22 @@ var matriz: Array = []
 var jugador: Vector2i
 var salida: Vector2i
 var enemigo: Vector2i
+var fuente: Vector2i = Vector2i(-1, -1)
+var tren_inicio: Vector2i = Vector2i(-1, -1)
+var tren_largo: int = 0
+var tren_orientacion: String = "h"
+var es_exterior: bool = false
+var altura_cielo: float = 18.0
 var jugador_nodo: Jugador
 var modo: int = Partida.Modo.U_R_D4MN3D
 var enemigo_nodo: EnemigoPerseguidor
 var hud: HUD
 var _env: Environment
 var posiciones_perks: Dictionary = {}
+var _mat_pared: StandardMaterial3D
+var _mat_suelo: StandardMaterial3D
+var _mat_techo: StandardMaterial3D
+var _mat_lapida: StandardMaterial3D
 
 # Modo DIJKSTRA: camino más corto del jugador a la salida. Se recalcula cada vez que el
 # jugador cambia de celda y lo usan el radar 2D y la vista del grafo (tecla Z).
@@ -60,6 +76,12 @@ func _ready() -> void:
 	jugador = datos["jugador"]
 	salida = datos["salida"]
 	enemigo = datos["enemigo"]
+	fuente = datos.get("fuente", Vector2i(-1, -1))
+	tren_inicio = datos.get("tren", Vector2i(-1, -1))
+	tren_largo = int(datos.get("tren_largo", 0))
+	tren_orientacion = str(datos.get("tren_orientacion", "h"))
+	es_exterior = str(datos.get("exterior", "0")) == "1"
+	altura_cielo = maxf(alto_muro + 1.0, float(datos.get("altura_cielo", "0")))
 	if matriz.is_empty():
 		return
 
@@ -67,8 +89,11 @@ func _ready() -> void:
 	if not respetar_salida_txt and _hay_salida():
 		salida = _elegir_salida_estrategica()
 
+	_preparar_materiales()
 	_construir_muros()
 	_construir_suelo_y_techo()
+	_construir_fuente()
+	_construir_tren()
 	if solo_escenografia:
 		return
 	if _hay_salida():
@@ -219,15 +244,96 @@ func _es_visible(x: int, y: int) -> bool:
 	return false
 
 
+# ── Materiales ───────────────────────────────────────────────────────────────
+# Busca texturas en Assets/MapAssets/<NombreDelMapa>/: *_albedo.png, *_normal.png
+# y opcionalmente *_roughness.png. Si no existen, usa el color plano de siempre.
+func _preparar_materiales() -> void:
+	_mat_pared = _material_texturizado("pared", Color(0.55, 0.55, 0.6), 0.8)
+	_mat_suelo = _material_texturizado("suelo", Color(0.12, 0.12, 0.14), 0.95)
+	if es_exterior:
+		_mat_techo = _material_texturizado("techo", Color(0.01, 0.015, 0.03), 1.0,
+			metros_por_textura_cielo, true)
+	else:
+		_mat_techo = _material_texturizado("techo", Color(0.08, 0.08, 0.09), 0.9)
+	_mat_lapida = _material_texturizado("lapida", Color(0.45, 0.45, 0.45), 0.85)
+
+
+func _carpeta_texturas() -> String:
+	var base: String = archivo_mapa.get_file().get_basename()
+	var guion: int = base.find("_")
+	if guion >= 0:
+		base = base.substr(guion + 1)
+	return "res://Assets/MapAssets/%s/" % base.capitalize()
+
+
+func _cargar_textura(ruta: String) -> Texture2D:
+	if ResourceLoader.exists(ruta):
+		return load(ruta) as Texture2D
+	return null
+
+
+func _material_texturizado(nombre: String, color: Color, rugosidad: float,
+		escala_metros: float = -1.0, es_cielo: bool = false) -> StandardMaterial3D:
+	var carpeta: String = _carpeta_texturas()
+	var albedo: Texture2D = _cargar_textura(carpeta + nombre + "_albedo.png")
+	if not usar_texturas or albedo == null:
+		var plano := _material(color)
+		if es_cielo:
+			_ajustar_material_cielo(plano)
+		return plano
+
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = albedo
+	m.albedo_color = Color.WHITE
+	var normal: Texture2D = _cargar_textura(carpeta + nombre + "_normal.png")
+	if normal != null:
+		m.normal_enabled = true
+		m.normal_texture = normal
+		m.normal_scale = 0.8
+	var rough: Texture2D = _cargar_textura(carpeta + nombre + "_roughness.png")
+	if rough != null:
+		m.roughness_texture = rough
+	else:
+		m.roughness = rugosidad
+
+	# Triplanar en coordenadas de mundo: evita que la textura se estire en muros largos.
+	m.uv1_triplanar = true
+	m.uv1_world_triplanar = true
+	m.uv1_triplanar_sharpness = 4.0
+	var metros: float = metros_por_textura if escala_metros <= 0.0 else escala_metros
+	var escala: float = 1.0 / maxf(0.05, metros)
+	m.uv1_scale = Vector3(escala, escala, escala)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	if es_cielo:
+		_ajustar_material_cielo(m)
+	return m
+
+
+func _ajustar_material_cielo(m: StandardMaterial3D) -> void:
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.disable_fog = true
+	m.disable_receive_shadows = true
+
+
 func _construir_muros() -> void:
-	var mat := _material(Color(0.55, 0.55, 0.6))
+	var mat: StandardMaterial3D = _mat_pared
+	var cementerio: bool = _es_cementerio()
 	var cols: int = matriz[0].size()
 	for y in matriz.size():
 		var x: int = 0
 		while x < cols:
+			if _es_celda_fuente(x, y) or _es_celda_tren(x, y):
+				x += 1
+				continue
 			if matriz[y][x] == 1 and _es_visible(x, y):
+				# En el cementerio, cada bloque de 1 aislado se convierte en una lápida.
+				if cementerio and _es_bloque_solitario(x, y):
+					_crear_lapida(Vector2i(x, y))
+					x += 1
+					continue
 				var inicio: int = x
-				while x < cols and matriz[y][x] == 1 and _es_visible(x, y):
+				while x < cols and matriz[y][x] == 1 and _es_visible(x, y) \
+						and not _es_celda_fuente(x, y) and not _es_celda_tren(x, y):
 					x += 1
 				var largo: int = x - inicio
 				_crear_bloque(
@@ -238,14 +344,264 @@ func _construir_muros() -> void:
 				x += 1
 
 
+func _es_celda_fuente(x: int, y: int) -> bool:
+	return fuente.x == x and fuente.y == y
+
+
+func _es_celda_tren(x: int, y: int) -> bool:
+	if tren_largo <= 0 or tren_inicio.x < 0:
+		return false
+	if tren_orientacion.to_lower() == "v":
+		return x >= tren_inicio.x and x <= tren_inicio.x + 1 \
+			and y >= tren_inicio.y and y < tren_inicio.y + tren_largo
+	return y >= tren_inicio.y and y <= tren_inicio.y + 1 \
+		and x >= tren_inicio.x and x < tren_inicio.x + tren_largo
+
+
+func _es_cementerio() -> bool:
+	return archivo_mapa.get_file().to_lower().contains("cementerio")
+
+
+# Un bloque solitario es un muro 1x1 sin ningún otro muro a su alrededor.
+func _es_bloque_solitario(x: int, y: int) -> bool:
+	if x <= 0 or y <= 0 or x >= matriz[0].size() - 1 or y >= matriz.size() - 1:
+		return false
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			if matriz[y + dy][x + dx] == 1:
+				return false
+	return true
+
+
+# Lápida con parcela elevada. La parcela bloquea la celda para conservar la colisión del mapa.
+func _crear_lapida(celda: Vector2i) -> void:
+	var cuerpo := StaticBody3D.new()
+	cuerpo.name = "Lapida_%d_%d" % [celda.x, celda.y]
+	cuerpo.add_to_group("lapidas")
+	cuerpo.position = celda_a_mundo(celda)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _hash_celda(celda)
+	cuerpo.rotation.y = rng.randf_range(-0.12, 0.12)
+
+	var base := _malla_caja(Vector3(1.8, 0.14, 1.8), Vector3(0.0, 0.07, 0.0), _mat_lapida)
+	cuerpo.add_child(base)
+	var tierra := _malla_caja(Vector3(1.5, 0.16, 1.5), Vector3(0.0, 0.16, 0.10), _mat_suelo)
+	cuerpo.add_child(tierra)
+
+	var ancho: float = rng.randf_range(0.9, 1.1)
+	var alto: float = rng.randf_range(1.1, 1.4)
+	var y0: float = 0.24
+	var z_lapida: float = -0.55
+
+	var lapida := _malla_caja(Vector3(ancho, alto, 0.32),
+		Vector3(0.0, y0 + alto * 0.5, z_lapida), _mat_lapida)
+	cuerpo.add_child(lapida)
+
+	# Tapa semicilíndrica: el cilindro va acostado sobre el eje X.
+	var radio: float = ancho * 0.5
+	var cilindro := CylinderMesh.new()
+	cilindro.top_radius = radio
+	cilindro.bottom_radius = radio
+	cilindro.height = ancho
+	cilindro.radial_segments = 16
+	var tapa := MeshInstance3D.new()
+	tapa.mesh = cilindro
+	tapa.material_override = _mat_lapida
+	tapa.position = Vector3(0.0, y0 + alto, z_lapida)
+	tapa.rotation.z = PI * 0.5
+	tapa.scale = Vector3(1.0, 1.0, 0.32 / maxf(0.01, radio * 2.0))
+	cuerpo.add_child(tapa)
+
+	# Algunas lápidas llevan una cruz en la cara frontal.
+	if rng.randf() < 0.45:
+		var z_cruz: float = z_lapida - 0.19
+		var cruz_v := _malla_caja(Vector3(0.11, alto * 0.45, 0.06),
+			Vector3(0.0, y0 + alto * 0.60, z_cruz), _mat_lapida)
+		cuerpo.add_child(cruz_v)
+		var cruz_h := _malla_caja(Vector3(0.46, 0.11, 0.06),
+			Vector3(0.0, y0 + alto * 0.72, z_cruz), _mat_lapida)
+		cuerpo.add_child(cruz_h)
+
+	# La parcela baja impide atravesar la celda sin necesidad de un muro invisible alto.
+	var col_parcela := CollisionShape3D.new()
+	var caja_parcela := BoxShape3D.new()
+	caja_parcela.size = Vector3(1.78, 0.28, 1.78)
+	col_parcela.shape = caja_parcela
+	col_parcela.position = Vector3(0.0, 0.14, 0.0)
+	cuerpo.add_child(col_parcela)
+
+	var col_lapida := CollisionShape3D.new()
+	var caja_lapida := BoxShape3D.new()
+	caja_lapida.size = Vector3(ancho, alto, 0.4)
+	col_lapida.shape = caja_lapida
+	col_lapida.position = Vector3(0.0, y0 + alto * 0.5, z_lapida)
+	cuerpo.add_child(col_lapida)
+
+	add_child(cuerpo)
+
+
+func _construir_fuente() -> void:
+	if fuente.x < 0 or fuente.y < 0:
+		return
+	var cuerpo := StaticBody3D.new()
+	cuerpo.name = "Fuente_%d_%d" % [fuente.x, fuente.y]
+	cuerpo.add_to_group("fuente")
+	cuerpo.position = celda_a_mundo(fuente)
+
+	var agua := _material(Color(0.05, 0.22, 0.28))
+	agua.metallic = 0.25
+	agua.roughness = 0.08
+	agua.emission_enabled = true
+	agua.emission = Color(0.03, 0.12, 0.15)
+	agua.emission_energy_multiplier = 0.7
+
+	cuerpo.add_child(_malla_cilindro(1.0, 1.12, 0.5, Vector3(0.0, 0.25, 0.0), _mat_pared))
+	cuerpo.add_child(_malla_cilindro(0.86, 0.86, 0.06, Vector3(0.0, 0.51, 0.0), agua))
+	cuerpo.add_child(_malla_cilindro(0.18, 0.22, 0.85, Vector3(0.0, 0.85, 0.0), _mat_pared))
+	cuerpo.add_child(_malla_cilindro(0.5, 0.28, 0.18, Vector3(0.0, 1.32, 0.0), _mat_pared))
+	cuerpo.add_child(_malla_cilindro(0.43, 0.43, 0.05, Vector3(0.0, 1.43, 0.0), agua))
+
+	var remate := MeshInstance3D.new()
+	var esfera := SphereMesh.new()
+	esfera.radius = 0.11
+	esfera.height = 0.22
+	remate.mesh = esfera
+	remate.material_override = _mat_pared
+	remate.position = Vector3(0.0, 1.56, 0.0)
+	cuerpo.add_child(remate)
+
+	var col := CollisionShape3D.new()
+	var forma := CylinderShape3D.new()
+	forma.radius = 1.05
+	forma.height = 0.55
+	col.shape = forma
+	col.position = Vector3(0.0, 0.275, 0.0)
+	cuerpo.add_child(col)
+	add_child(cuerpo)
+
+
+func _construir_tren() -> void:
+	if tren_largo <= 0 or tren_inicio.x < 0:
+		return
+	var vertical: bool = tren_orientacion.to_lower() == "v"
+	var largo_total: float = tren_largo * tam_celda
+	var ancho_total: float = 2.0 * tam_celda
+	var centro_x: float = (tren_inicio.x + (1.0 if vertical else tren_largo / 2.0)) * tam_celda
+	var centro_z: float = (tren_inicio.y + (tren_largo / 2.0 if vertical else 1.0)) * tam_celda
+	var raiz := Node3D.new()
+	raiz.name = "Tren_%d_%d" % [tren_inicio.x, tren_inicio.y]
+	raiz.add_to_group("tren")
+	raiz.position = Vector3(centro_x, 0.0, centro_z)
+	if vertical:
+		raiz.rotation.y = PI * 0.5
+	add_child(raiz)
+
+	var balasto := _material(Color(0.12, 0.12, 0.13))
+	balasto.roughness = 0.95
+	raiz.add_child(_malla_caja(Vector3(largo_total, 0.1, ancho_total * 0.9),
+		Vector3(0.0, 0.05, 0.0), balasto))
+
+	var durmiente := _material(Color(0.18, 0.14, 0.11))
+	durmiente.roughness = 0.9
+	var x_durmiente: float = -largo_total * 0.5 + 1.0
+	while x_durmiente < largo_total * 0.5:
+		raiz.add_child(_malla_caja(Vector3(0.25, 0.08, ancho_total * 0.82),
+			Vector3(x_durmiente, 0.09, 0.0), durmiente))
+		x_durmiente += 2.0
+
+	var metal := _material(Color(0.42, 0.44, 0.48))
+	metal.metallic = 0.85
+	metal.roughness = 0.28
+	raiz.add_child(_malla_caja(Vector3(largo_total, 0.12, 0.1),
+		Vector3(0.0, 0.17, -0.75), metal))
+	raiz.add_child(_malla_caja(Vector3(largo_total, 0.12, 0.1),
+		Vector3(0.0, 0.17, 0.75), metal))
+
+	var carroceria := _material(Color(0.17, 0.22, 0.29))
+	carroceria.metallic = 0.55
+	carroceria.roughness = 0.38
+	var techo := _material(Color(0.10, 0.12, 0.15))
+	techo.metallic = 0.4
+	techo.roughness = 0.55
+	var ventanas := _material(Color(0.35, 0.55, 0.7))
+	ventanas.emission_enabled = true
+	ventanas.emission = Color(0.45, 0.72, 1.0)
+	ventanas.emission_energy_multiplier = 1.6
+	var franja := _material(Color(0.85, 0.68, 0.16))
+	franja.metallic = 0.2
+	franja.roughness = 0.5
+
+	var num_coches: int = 4
+	var separacion: float = 0.9
+	var largo_coche: float = (largo_total - separacion * (num_coches - 1)) / num_coches
+	var ancho_cuerpo: float = ancho_total * 0.82
+	var alto_cuerpo: float = 2.45
+	var y_base: float = 0.25
+	for i in num_coches:
+		var x_coche: float = -largo_total * 0.5 + largo_coche * 0.5 + i * (largo_coche + separacion)
+		raiz.add_child(_malla_caja(Vector3(largo_coche, alto_cuerpo, ancho_cuerpo),
+			Vector3(x_coche, y_base + alto_cuerpo * 0.5, 0.0), carroceria))
+		raiz.add_child(_malla_caja(Vector3(largo_coche * 0.96, 0.18, ancho_cuerpo * 0.92),
+			Vector3(x_coche, y_base + alto_cuerpo + 0.09, 0.0), techo))
+		for lado in [-1.0, 1.0]:
+			var z_lado: float = lado * (ancho_cuerpo * 0.5 + 0.03)
+			raiz.add_child(_malla_caja(Vector3(largo_coche * 0.72, 0.65, 0.05),
+				Vector3(x_coche, y_base + alto_cuerpo * 0.66, z_lado), ventanas))
+			raiz.add_child(_malla_caja(Vector3(largo_coche * 0.92, 0.12, 0.05),
+				Vector3(x_coche, y_base + 0.34, z_lado), franja))
+
+	var colision := StaticBody3D.new()
+	var col := CollisionShape3D.new()
+	var caja := BoxShape3D.new()
+	caja.size = Vector3(largo_total, 2.8, ancho_total * 0.9)
+	col.shape = caja
+	col.position = Vector3(0.0, 1.4, 0.0)
+	colision.add_child(col)
+	raiz.add_child(colision)
+
+
+func _malla_cilindro(radio_sup: float, radio_inf: float, alto: float, pos: Vector3,
+		mat: Material) -> MeshInstance3D:
+	var malla := MeshInstance3D.new()
+	var cilindro := CylinderMesh.new()
+	cilindro.top_radius = radio_sup
+	cilindro.bottom_radius = radio_inf
+	cilindro.height = alto
+	cilindro.radial_segments = 24
+	malla.mesh = cilindro
+	malla.material_override = mat
+	malla.position = pos
+	return malla
+
+
+func _hash_celda(c: Vector2i) -> int:
+	return absi((c.x * 73856093) ^ (c.y * 19349663))
+
+
+func _malla_caja(tam: Vector3, pos: Vector3, mat: Material) -> MeshInstance3D:
+	var malla := MeshInstance3D.new()
+	var caja := BoxMesh.new()
+	caja.size = tam
+	malla.mesh = caja
+	malla.material_override = mat
+	malla.position = pos
+	return malla
+
+
 func _construir_suelo_y_techo() -> void:
 	var ancho: float = matriz[0].size() * tam_celda
 	var largo: float = matriz.size() * tam_celda
 	_crear_bloque(Vector3(ancho / 2.0, -0.1, largo / 2.0), Vector3(ancho, 0.2, largo),
-		_material(Color(0.12, 0.12, 0.14)), true)
+		_mat_suelo, true)
 	if con_techo and not camara_cenital:
-		_crear_bloque(Vector3(ancho / 2.0, alto_muro + 0.1, largo / 2.0), Vector3(ancho, 0.2, largo),
-			_material(Color(0.08, 0.08, 0.09)), false)
+		if es_exterior:
+			_crear_bloque(Vector3(ancho / 2.0, altura_cielo, largo / 2.0),
+				Vector3(ancho * 4.0, 0.2, largo * 4.0), _mat_techo, false)
+		else:
+			_crear_bloque(Vector3(ancho / 2.0, alto_muro + 0.1, largo / 2.0),
+				Vector3(ancho, 0.2, largo), _mat_techo, false)
 
 
 func _crear_bloque(pos: Vector3, tam: Vector3, mat: Material, con_colision: bool) -> void:
@@ -322,12 +678,12 @@ func _on_celda_cambiada(celda: Vector2i) -> void:
 func _agregar_ambiente() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.02, 0.02, 0.03)
+	env.background_color = Color(0.01, 0.015, 0.03) if es_exterior else Color(0.02, 0.02, 0.03)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.25, 0.28, 0.4)
 	env.ambient_light_energy = 0.15
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.03, 0.03, 0.04)
+	env.fog_light_color = Color(0.015, 0.02, 0.04) if es_exterior else Color(0.03, 0.03, 0.04)
 	env.fog_density = 0.08
 	var we := WorldEnvironment.new()
 	we.environment = env

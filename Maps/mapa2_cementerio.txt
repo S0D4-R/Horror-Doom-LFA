@@ -1,4 +1,4 @@
-# nombre=Cementerio | tamano=40x40 | formato fila,columna
+# nombre=Cementerio | tamano=40x40 | formato fila,columna | exterior=1 altura_cielo=20
 # jugador=38,38 salida=1,1 enemigo=9,34
 1111111111111111111111111111111111111111
 1000000000000000000000000000000000000001

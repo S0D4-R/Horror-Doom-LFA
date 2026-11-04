@@ -66,8 +66,8 @@ Mapas disponibles:
 |---|---|---|---|
 | Pasillos | `Maps/mapa1_pasillos.txt` | 61 × 37 | 1180 |
 | Cementerio | `Maps/mapa2_cementerio.txt` | 40 × 40 | 1195 |
-| Plaza | `Maps/mapa3_plaza.txt` | 41 × 41 | 1002 |
-| Ciudad | `Maps/mapa4_ciudad.txt` | 60 × 40 | 1136 |
+| Plaza | `Maps/mapa3_plaza.txt` | 41 × 41 | 1288 |
+| Metro | `Maps/mapa4_metro.txt` | 60 × 40 | 1484 |
 
 ---
 
@@ -103,7 +103,7 @@ Horror-Doom-LFA/
 │   ├── mapa1_pasillos.txt
 │   ├── mapa2_cementerio.txt
 │   ├── mapa3_plaza.txt
-│   └── mapa4_ciudad.txt
+│   └── mapa4_metro.txt
 ├── Grafo/
 │   └── grafo.gd               # Carga de mapas + grafo + Dijkstra (class_name Grafo)
 ├── Automata/
@@ -158,7 +158,7 @@ Los mapas son archivos de texto en `Maps/`. Cada línea que empieza con `#` es c
 filas de `0` y `1`.
 
 ```text
-# nombre=Cementerio | tamano=40x40 | formato fila,columna
+# nombre=Cementerio | tamano=40x40 | formato fila,columna | exterior=1 altura_cielo=20
 # jugador=38,38 salida=1,1 enemigo=9,34
 1111111111111111111111111111111111111111
 1000000000000000000000000000000000000001
@@ -168,17 +168,28 @@ filas de `0` y `1`.
 - **Convención:** `0 = piso`, `1 = muro`.
 - Una celda es `Vector2i(x = columna, y = fila)`.
 - La matriz se indexa como `matriz[y][x]` (fila primero).
-- Las cabeceras `jugador`, `salida` y `enemigo` se escriben como `fila,columna` y se convierten a
-  `Vector2i(columna, fila)`.
+- Las cabeceras `jugador`, `salida`, `enemigo`, `fuente` y `tren` se escriben como `fila,columna` y
+  se convierten a `Vector2i(columna, fila)`.
+- `fuente=fila,columna` construye una fuente 3D en esa celda (Plaza).
+- `tren=fila,columna,celdas,orientacion` reserva una huella de 2 celdas de ancho por `celdas` de
+  largo y construye un tren de 4 coches; `orientacion` puede ser `h` o `v` (Metro).
+- `exterior=1` sustituye el techo interior por un cielo estrellado alto; `altura_cielo` indica su
+  altura en metros (Cementerio y Plaza).
 
 `Grafo.cargar(ruta)` (`Grafo/grafo.gd:7`) devuelve un `Dictionary`:
 
 ```gdscript
 {
-    "matriz": Array,        # Array de filas; cada fila es un Array de enteros 0/1
-    "jugador": Vector2i,    # posición inicial del jugador
-    "salida": Vector2i,     # celda de salida (puede recalcularse)
-    "enemigo": Vector2i,    # posición inicial de Abaddon
+    "matriz": Array,            # Array de filas; cada fila es un Array de enteros 0/1
+    "jugador": Vector2i,        # posición inicial del jugador
+    "salida": Vector2i,         # celda de salida (puede recalcularse)
+    "enemigo": Vector2i,        # posición inicial de Abaddon
+    "fuente": Vector2i,         # celda de la fuente, o (-1, -1)
+    "tren": Vector2i,           # celda inicial de la huella del tren, o (-1, -1)
+    "tren_largo": int,          # celdas de largo del tren (0 si no hay)
+    "tren_orientacion": String, # "h" o "v"
+    "exterior": String,         # "1" si el mapa tiene cielo exterior
+    "altura_cielo": String,     # altura del cielo exterior en metros
 }
 ```
 
