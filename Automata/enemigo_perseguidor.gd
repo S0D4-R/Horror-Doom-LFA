@@ -67,6 +67,7 @@ var contador_pasos_jugador: int = 0
 var _celda_objetivo: Vector2i = Vector2i.ZERO
 var _tiene_objetivo: bool = false
 var _velocidad_base: float = 0.0   # velocidad_perseguir original, para poder frenarlo (mapa de pasos)
+var _t_ruta_visual: float = 0.0    # temporizador para refrescar [ruta] cuando calcular_ruta_siempre está activo
 
 
 func _ready() -> void:
