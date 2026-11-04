@@ -85,6 +85,9 @@ var _pausado: bool = false
 
 
 func _ready() -> void:
+	# El HUD debe seguir recibiendo input con el juego en pausa; si no, el menú de pausa queda muerto
+	# (los botones no responden y ESC no puede reanudar).
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_tex_linterna = load("res://Assets/Chars/LANTERN_recolor2.png")
 	_tex_pistola  = load("res://Assets/Chars/pistol_hand_recolor.png")
 	if ResourceLoader.exists("res://Assets/Chars/SHOOT_recolor.png"):
@@ -96,6 +99,7 @@ func _ready() -> void:
 	_raiz.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_raiz)
 	_raiz.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_raiz.process_mode = Node.PROCESS_MODE_PAUSABLE   # el HUD de juego (radar, mano...) sí se congela al pausar
 
 	_crear_efecto_rojo()
 	_crear_mano()
@@ -460,6 +464,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if jugador == null:
 		return
+	if _pausado:
+		return   # con el menú de pausa abierto no se actualiza nada del HUD de juego
 	if _gameover_visible:
 		if _gameover_alpha < 1.0:
 			_gameover_alpha = minf(1.0, _gameover_alpha + delta * 0.8)
