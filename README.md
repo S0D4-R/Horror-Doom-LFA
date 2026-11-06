@@ -422,8 +422,8 @@ Los archivos `.import` son metadatos generados por Godot y no deben editarse a m
 
 Definidos en `Scenes/mapa_3d.gd`:
 
-- **Konami:** `↑ ↑ ↓ ↓ ← → ← → clic-izq clic-der` → teletransporta al jugador a la salida.
-- **Lluvia:** `← → clic-der clic-der` → hace aparecer junto al jugador todos los perks que falten.
+- **Konami:** `↑ ↑ ↓ ↓ ← → ← → clic-izq clic-der` (también con `W W S S A D A D`) → teletransporta al jugador a la salida.
+- **Lluvia:** `← → ← → doble clic-der` (también con `A D A D`) → coloca todos los perks en las celdas libres más cercanas al jugador.
 
 Las entradas se acumulan en un buffer de 10 caracteres y se comparan por sufijo.
 

@@ -42,16 +42,16 @@ const MAPAS: Array = [
 	{
 		"nombre": "PLAZA",
 		"archivo": "res://Maps/mapa3_plaza.txt",
-		"tam": "41 x 41",
-		"nodos": 1288,
-		"desc": "Una plaza abierta con una fuente central. Alrededor, edificios en ruinas y callejones estrechos.",
+		"tam": "61 x 61",
+		"nodos": 2483,
+		"desc": "Una plaza monumental con una gran fuente central, edificios cerrados a los lados y callejones en penumbra.",
 	},
 	{
 		"nombre": "METRO",
 		"archivo": "res://Maps/mapa4_metro.txt",
-		"tam": "60 x 40",
-		"nodos": 1484,
-		"desc": "Una estación de metro abandonada. Andenes, columnas y un tren detenido en la penumbra.",
+		"tam": "81 x 53",
+		"nodos": 2933,
+		"desc": "Una estación de metro abandonada con carteles japoneses, anuncios, andenes, columnas y un tren detenido.",
 	},
 ]
 
